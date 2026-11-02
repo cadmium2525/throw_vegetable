@@ -99,3 +99,16 @@ footer{font-size:11px;letter-spacing:.6px}
 }
 
 .model-comparison{font-size:18px;font-weight:700;line-height:1.7;background:#e4eadd;border-radius:8px;padding:12px 14px}
+.theory-panel{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+.theory-panel .research-status{font-size:18px;font-weight:700}
+.theory-panel summary{font-size:21px;font-weight:700;cursor:pointer;padding:12px 0}
+.theory-panel p{font-size:17px;line-height:1.7}
+.theory-presets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.theory-presets button{font-size:18px;min-height:48px;border:1px solid #b9c997;border-radius:8px;background:#f4f3e9;padding:10px 4px}
+.theory-presets button[aria-pressed=true]{background:var(--ink);color:#fff8eb}
+.theory-results dl{margin:20px 0}
+.theory-results dl>div{padding:12px 0;border-bottom:1px solid var(--line)}
+.theory-results dt{font-size:16px}
+.theory-results dd{margin:6px 0 0;font-size:clamp(22px,5.5vw,30px);font-weight:700;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.theory-results sup{font-size:.65em}
+.theory-panel .source-link{font-size:16px;overflow-wrap:anywhere}

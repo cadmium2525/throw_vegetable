@@ -12,6 +12,7 @@ import { createCityView } from './render/city';
 import { airFlow, DEFAULT_BREAKUP } from './simulation/flow';
 import { impactPulse, pressureAt } from './simulation/acoustics';
 import { createAirborneFragments } from './render/airborne';
+import { mountTheoryPanel } from './ui/theory';
 import './style.css';
 
 const icons: Record<string, string> = {
@@ -385,7 +386,8 @@ $('city-report-button').addEventListener('click', () => { showDialog(cityDialog)
 
 function showDialog(dialog: HTMLDialogElement) { dialog.showModal(); }
 $('settings-button').addEventListener('click', () => showDialog(settingsDialog));
-$('model-button').addEventListener('click', () => showDialog(modelDialog));
+const updateTheoryPanel = mountTheoryPanel(modelDialog, () => VEGETABLES.find(v => v.id === selectedId)!);
+$('model-button').addEventListener('click', () => { updateTheoryPanel(); showDialog(modelDialog); });
 document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', () => $<HTMLDialogElement>(button.dataset.close!).close()));
 [settingsDialog, modelDialog, cityDialog].forEach(dialog => dialog.addEventListener('click', event => {
   if (event.target === dialog) {
