@@ -385,7 +385,7 @@ export function createWorld(container: HTMLElement): WorldView {
     concrete: material('#dcd5bc'),
   };
 
-  const ground = object(new THREE.PlaneGeometry(210, 210), mats.grass, false);
+  const ground = object(new THREE.PlaneGeometry(600, 600), mats.grass, false);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.025;
   scene.add(ground);

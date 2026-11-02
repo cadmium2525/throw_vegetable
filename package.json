@@ -10,7 +10,6 @@
     "test": "tsx --test src/simulation/*.test.ts src/render/*.test.ts"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.21.0",
     "three": "^0.187.0"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { RigidBody, World } from '@dimforge/rapier3d-compat';
+import { createAftermath, stepAftermath, type AftermathCloud } from '../simulation/aftermath';
+import type { ImpactResponse } from '../simulation/impact';
 
 export interface ImpactOptions {
   position: THREE.Vector3;
@@ -20,25 +21,23 @@ export interface ImpactOptions {
   incomingVelocity?: THREE.Vector3;
 }
 
+export interface FollowTarget {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  radius: number;
+  landed: boolean;
+}
+
 export interface ThrowEffects {
   update(realDelta: number): void;
   impact(options: ImpactOptions): void;
   setTrail(points: THREE.Vector3[]): void;
+  getFollowTarget(): FollowTarget | null;
   clear(): void;
   dispose(): void;
 }
 
-type Chunk = {
-  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-  body?: RigidBody;
-  velocity: THREE.Vector3;
-  spin: THREE.Vector3;
-  radius: number;
-  age: number;
-  life: number;
-};
-
-type Dust = {
+type Mist = {
   sprite: THREE.Sprite;
   velocity: THREE.Vector3;
   age: number;
@@ -47,69 +46,44 @@ type Dust = {
   size: number;
 };
 
-type Droplet = {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  radius: number;
-  age: number;
-  life: number;
+type FragmentStyle = {
+  scale: THREE.Vector3;
+  rotation: THREE.Euler;
+  spin: THREE.Vector3;
 };
 
-/** Debris is an illustrative effect, separate from the measured flight model. */
+/** Rendering adapter for the mass-accounted, persistent aftermath model. */
 export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
-  let physics: World | null = null;
-  let RAPIER: (typeof import('@dimforge/rapier3d-compat'))['default'] | null = null;
-  let disposed = false;
-  async function initializeDebrisPhysics() {
-    let initializingWorld: World | null = null;
-    try {
-      const module = (await import('@dimforge/rapier3d-compat')).default;
-      await module.init();
-      if (disposed) return;
-      initializingWorld = new module.World({ x: 0, y: -9.80665, z: 0 });
-      initializingWorld.timestep = 1 / 120;
-      initializingWorld.createCollider(module.ColliderDesc.cuboid(80, 0.1, 100)
-        .setTranslation(0, -0.1, -30).setFriction(0.75).setRestitution(0.18));
-      initializingWorld.createCollider(module.ColliderDesc.cuboid(1.3, 1.3, 0.06)
-        .setTranslation(0, 1.6, -12.07).setFriction(0.55).setRestitution(0.2));
-      RAPIER = module;
-      physics = initializingWorld;
-    } catch (error) {
-      initializingWorld?.free();
-      console.info('Debris uses the lightweight visual fallback.', error);
-    }
-  }
-
   const root = new THREE.Group();
   root.name = 'throw-effects';
   scene.add(root);
-  const chunks: Chunk[] = [];
-  const dust: Dust[] = [];
-  const droplets: Droplet[] = [];
-  let spray: THREE.InstancedMesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial> | null = null;
+  const mist: Mist[] = [];
+  let cloud: AftermathCloud | null = null;
+  let followedParticleId: number | null = null;
+  let depositsOnTarget = false;
+  let fragments: THREE.InstancedMesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial> | null = null;
   let splat: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null = null;
+  const styles: FragmentStyle[] = [];
   const instanceTransform = new THREE.Object3D();
-  let accumulator = 0;
   let sequence = 1;
 
-  // A seeded generator keeps an individual throw stable between replay frames.
   function random(): number {
     sequence = (Math.imul(sequence, 1664525) + 1013904223) >>> 0;
     return sequence / 4294967296;
   }
 
-  const dustCanvas = document.createElement('canvas');
-  dustCanvas.width = dustCanvas.height = 64;
-  const dustContext = dustCanvas.getContext('2d');
-  if (dustContext) {
-    const gradient = dustContext.createRadialGradient(32, 32, 0, 32, 32, 31);
-    gradient.addColorStop(0, 'rgba(255,255,255,0.75)');
-    gradient.addColorStop(0.45, 'rgba(255,255,255,0.3)');
+  const mistCanvas = document.createElement('canvas');
+  mistCanvas.width = mistCanvas.height = 64;
+  const mistContext = mistCanvas.getContext('2d');
+  if (mistContext) {
+    const gradient = mistContext.createRadialGradient(32, 32, 0, 32, 32, 31);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.65)');
+    gradient.addColorStop(0.45, 'rgba(255,255,255,0.25)');
     gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    dustContext.fillStyle = gradient;
-    dustContext.fillRect(0, 0, 64, 64);
+    mistContext.fillStyle = gradient;
+    mistContext.fillRect(0, 0, 64, 64);
   }
-  const dustTexture = new THREE.CanvasTexture(dustCanvas);
+  const mistTexture = new THREE.CanvasTexture(mistCanvas);
 
   const trailCapacity = 192;
   const trailPositions = new Float32Array(trailCapacity * 3);
@@ -125,31 +99,24 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
   trail.frustumCulled = false;
   root.add(trail);
 
-  function removeChunk(index: number) {
-    const chunk = chunks[index];
-    if (chunk.body && physics) physics.removeRigidBody(chunk.body);
-    root.remove(chunk.mesh);
-    chunk.mesh.geometry.dispose();
-    chunk.mesh.material.dispose();
-    chunks.splice(index, 1);
-  }
-
-  function removeDust(index: number) {
-    root.remove(dust[index].sprite);
-    (dust[index].sprite.material as THREE.SpriteMaterial).dispose();
-    dust.splice(index, 1);
+  function removeMist(index: number) {
+    root.remove(mist[index].sprite);
+    (mist[index].sprite.material as THREE.SpriteMaterial).dispose();
+    mist.splice(index, 1);
   }
 
   function clearParticles() {
-    for (let i = chunks.length - 1; i >= 0; i--) removeChunk(i);
-    for (let i = dust.length - 1; i >= 0; i--) removeDust(i);
-    if (spray) {
-      root.remove(spray);
-      spray.geometry.dispose();
-      spray.material.dispose();
-      spray = null;
+    for (let i = mist.length - 1; i >= 0; i--) removeMist(i);
+    if (fragments) {
+      root.remove(fragments);
+      fragments.geometry.dispose();
+      fragments.material.dispose();
+      fragments = null;
     }
-    droplets.length = 0;
+    cloud = null;
+    followedParticleId = null;
+    depositsOnTarget = false;
+    styles.length = 0;
     if (splat) {
       root.remove(splat);
       splat.material.map?.dispose();
@@ -157,151 +124,122 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
       splat.geometry.dispose();
       splat = null;
     }
-    accumulator = 0;
   }
 
   function impact(options: ImpactOptions) {
     clearParticles();
     if (options.kind === 'timeout') return;
     const speed = Math.max(0, options.speedKmh);
-    const energy = Math.max(0, options.energyJ);
-    const mass = Math.max(0.02, options.massKg ?? 0.18);
-    const vegetableRadius = Math.max(0.025, options.radiusM ?? 0.055);
-    const response = options.response;
-    const condition = response?.vegetable ?? (speed < 40 ? 'intact' : speed < 200 ? 'split' : 'pulverized');
-    const severity = THREE.MathUtils.clamp(response?.severity ?? speed / 500, 0, 1);
-    const isGround = options.kind === 'ground';
-    const origin = options.position.clone();
-    if (isGround) origin.y = Math.max(0.04, origin.y);
-    else origin.z = -11.975;
+    const radius = Math.max(0.025, options.radiusM ?? 0.055);
+    const condition = options.response?.vegetable ?? (speed < 40 ? 'intact' : speed < 200 ? 'split' : 'pulverized');
+    // Main owns the intact vegetable mesh, including a low-speed ground drop.
+    if (condition === 'intact') return;
+    const severity = THREE.MathUtils.clamp(options.response?.severity ?? speed / 500, 0, 1);
+    const target: ImpactResponse['target'] = options.response?.target === 'breached' ? 'breached'
+      : options.response?.target === 'cracked' ? 'cracked'
+      : options.response?.target === 'dent' ? 'dent' : 'none';
+    const response: ImpactResponse = {
+      vegetable: condition,
+      target,
+      severity,
+      fragmentCount: options.response?.fragmentCount ?? (condition === 'pulverized' ? 120 : 8),
+      holeRadiusM: options.response?.holeRadiusM ?? 0,
+    };
     sequence = Math.max(1, Math.round(options.energyJ * 31 + speed * 7)) >>> 0;
-    const pulverized = condition === 'pulverized';
-    const broken = condition !== 'intact';
+    depositsOnTarget = options.kind === 'target';
+    cloud = createAftermath({
+      position: { x: options.position.x, y: options.position.y, z: options.position.z },
+      velocity: options.incomingVelocity
+        ? { x: options.incomingVelocity.x, y: options.incomingVelocity.y, z: options.incomingVelocity.z }
+        : { x: 0, y: 0, z: -speed / 3.6 },
+      massKg: Math.max(0.001, options.massKg ?? 0.18),
+      radiusM: radius,
+      vegetableId: options.vegetableId ?? 'tomato',
+      energyJ: Math.max(0, options.energyJ),
+      kind: options.kind,
+      response,
+      seed: sequence,
+    });
+    // Lock the camera to one actual fragment for the entire aftermath. The
+    // representative velocity is selected once; later dispersion never moves
+    // the focus into empty space between fragments.
+    const forward = cloud.particles.filter(particle => particle.kind === 'forward');
+    const forwardMass = forward.reduce((sum, particle) => sum + particle.massKg, 0);
+    if (forwardMass > 0) {
+      const meanVelocity = new THREE.Vector3();
+      for (const particle of forward) {
+        const weight = particle.massKg / forwardMass;
+        meanVelocity.x += particle.velocity.x * weight;
+        meanVelocity.y += particle.velocity.y * weight;
+        meanVelocity.z += particle.velocity.z * weight;
+      }
+      let bestDistance = Infinity;
+      let bestMass = -Infinity;
+      for (const particle of forward) {
+        const distance = (particle.velocity.x - meanVelocity.x) ** 2
+          + (particle.velocity.y - meanVelocity.y) ** 2
+          + (particle.velocity.z - meanVelocity.z) ** 2;
+        const tied = Math.abs(distance - bestDistance) < 1e-12;
+        if (distance < bestDistance - 1e-12 || tied && (particle.massKg > bestMass
+          || particle.massKg === bestMass && particle.id < (followedParticleId ?? Infinity))) {
+          followedParticleId = particle.id;
+          bestDistance = distance;
+          bestMass = particle.massKg;
+        }
+      }
+    }
+
     const skinColor = new THREE.Color(options.color);
     const fleshColors: Record<string, number> = {
       tomato: 0xf07c55, carrot: 0xf7b552, cucumber: 0xd0dea6,
       eggplant: 0xe8dbb4, pumpkin: 0xf6b43e, cabbage: 0xdce4b9,
     };
-    const fleshColor = options.vegetableId && fleshColors[options.vegetableId]
-      ? new THREE.Color(fleshColors[options.vegetableId])
-      : skinColor.clone().lerp(new THREE.Color(0xffe4a6), 0.4);
-
-    // This is a bounded visual fragmentation estimate, not an explosion model.
-    // Only a small fraction of impact energy is assigned to visible ejecta.
-    const ejectaBudget = energy * (pulverized ? 0.018 : 0.04);
-    const velocityScale = Math.min(pulverized ? 25 : 12, Math.sqrt(2 * ejectaBudget / (mass * 0.6)));
-    const incoming = options.incomingVelocity?.clone().normalize() ?? new THREE.Vector3(0, 0, -1);
-    const skinCount = !broken ? 0 : pulverized ? 16 : THREE.MathUtils.clamp(response?.fragmentCount ?? 6, 3, 9);
-    const chunkVelocities: THREE.Vector3[] = [];
-    const chunkRadii: number[] = [];
-    for (let i = 0; i < skinCount; i++) {
-      chunkRadii.push(pulverized
-        ? Math.min(0.018, vegetableRadius * (0.045 + random() * 0.09))
-        : vegetableRadius * (0.24 + random() * 0.2));
-      const theta = random() * Math.PI * 2;
-      const radial = velocityScale * (0.12 + random() * 0.65);
-      chunkVelocities.push(new THREE.Vector3(
-        Math.cos(theta) * radial + incoming.x * velocityScale * 0.1,
-        Math.sin(theta) * radial + velocityScale * (isGround ? 0.5 : 0.08),
-        velocityScale * (0.08 + random() * 0.35),
-      ));
-    }
-
-    if (broken) {
-      const count = pulverized ? Math.round(170 + severity * 70) : 52;
-      spray = new THREE.InstancedMesh(
-        new THREE.IcosahedronGeometry(1, 0),
-        new THREE.MeshStandardMaterial({ roughness: 0.24, metalness: 0, transparent: true, opacity: 0.95 }),
-        count,
-      );
-      spray.name = 'fine-vegetable-pulp';
-      spray.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      spray.frustumCulled = false;
-      root.add(spray);
-      for (let i = 0; i < count; i++) {
-        const theta = random() * Math.PI * 2;
-        const radial = velocityScale * (0.08 + random() ** 0.6 * 0.85);
-        const radius = Math.min(0.012, vegetableRadius * (0.025 + random() * 0.07));
-        droplets.push({
-          position: origin.clone().add(new THREE.Vector3((random() - 0.5) * vegetableRadius, (random() - 0.5) * vegetableRadius, random() * 0.035)),
-          velocity: new THREE.Vector3(
-            Math.cos(theta) * radial + incoming.x * velocityScale * 0.12,
-            Math.sin(theta) * radial + velocityScale * (isGround ? 0.5 : 0.05),
-            velocityScale * (0.06 + random() * 0.42),
-          ),
-          radius, age: 0, life: 1.6 + random() * 1.5,
-        });
-        spray.setColorAt(i, i % 5 === 0 ? skinColor : fleshColor.clone().lerp(new THREE.Color(0xfff8d9), random() * 0.22));
-      }
-
-      // Normalize all emitted translational velocities together to conserve the
-      // assigned energy budget even when mass, angle or particle count changes.
-      const sprayMass = mass * (pulverized ? 0.55 : 0.12);
-      const skinMass = mass * (pulverized ? 0.08 : 0.65);
-      const calculatedEnergy = droplets.reduce((sum, particle) => sum + 0.5 * sprayMass / count * particle.velocity.lengthSq(), 0)
-        + chunkVelocities.reduce((sum, velocity) => sum + 0.5 * skinMass / skinCount * velocity.lengthSq(), 0);
-      const correction = Math.min(1, Math.sqrt(ejectaBudget / Math.max(1e-9, calculatedEnergy)));
-      droplets.forEach(particle => particle.velocity.multiplyScalar(correction));
-      chunkVelocities.forEach(velocity => velocity.multiplyScalar(correction));
-      if (spray.instanceColor) spray.instanceColor.needsUpdate = true;
-    }
-
-    for (let i = 0; i < skinCount; i++) {
-      const radius = chunkRadii[i];
-      const geometry = new THREE.IcosahedronGeometry(radius, 0);
-      const material = new THREE.MeshStandardMaterial({
-        color: pulverized || i % 3 === 0 ? skinColor : fleshColor,
-        roughness: 0.55, flatShading: true, transparent: true,
+    const fleshColor = new THREE.Color(fleshColors[options.vegetableId ?? ''] ?? options.color);
+    fragments = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(1, 0),
+      new THREE.MeshStandardMaterial({ roughness: 0.33, metalness: 0, flatShading: true }),
+      cloud.particles.length,
+    );
+    fragments.name = 'persistent-vegetable-fragments';
+    fragments.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    fragments.frustumCulled = false;
+    fragments.castShadow = true;
+    fragments.receiveShadow = true;
+    root.add(fragments);
+    cloud.particles.forEach((particle, i) => {
+      const skin = i % 6 === 0;
+      const deposited = particle.kind === 'deposit' && depositsOnTarget;
+      styles.push({
+        scale: deposited ? new THREE.Vector3(1.2, 1.2, 0.16)
+          : skin ? new THREE.Vector3(0.7, 1.6, 0.2)
+          : new THREE.Vector3(0.85 + random() * 0.3, 0.7 + random() * 0.4, 0.75 + random() * 0.4),
+        rotation: deposited ? new THREE.Euler(0, 0, random() * Math.PI * 2)
+          : new THREE.Euler(random() * 6, random() * 6, random() * 6),
+        spin: deposited ? new THREE.Vector3() : new THREE.Vector3((random() - 0.5) * 10, (random() - 0.5) * 10, (random() - 0.5) * 10),
       });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.castShadow = !pulverized;
-      mesh.position.copy(origin).add(new THREE.Vector3(
-        (random() - 0.5) * vegetableRadius, random() * vegetableRadius, random() * 0.025,
-      ));
-      if (pulverized) mesh.scale.set(0.85, 1.5, 0.13);
-      else mesh.scale.set(0.75, 1.1, 0.7);
-      root.add(mesh);
-      const velocity = chunkVelocities[i];
-      const spin = new THREE.Vector3((random() - 0.5) * 16, (random() - 0.5) * 16, (random() - 0.5) * 16);
-      let body: RigidBody | undefined;
-      if (physics && RAPIER) {
-        body = physics.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
-          .setTranslation(mesh.position.x, mesh.position.y, mesh.position.z)
-          .setLinvel(velocity.x, velocity.y, velocity.z)
-          .setAngvel({ x: spin.x, y: spin.y, z: spin.z })
-          .setLinearDamping(0.35).setAngularDamping(0.8).setCcdEnabled(true));
-        physics.createCollider(RAPIER.ColliderDesc.ball(radius)
-          .setDensity(850).setFriction(0.7).setRestitution(0.18), body);
-      }
-      chunks.push({ mesh, body, velocity, spin, radius, age: 0, life: 3.2 + random() * 0.7 });
-    }
+      fragments!.setColorAt(i, skin ? skinColor : fleshColor.clone().lerp(new THREE.Color(0xfff8d9), random() * 0.18));
+    });
+    if (fragments.instanceColor) fragments.instanceColor.needsUpdate = true;
+    renderFragments();
 
-    const dustCount = broken ? 7 : isGround ? 3 : 0;
-    for (let i = 0; i < dustCount; i++) {
-      const mistColor = isGround && !broken ? new THREE.Color(0xc6ad85) : fleshColor.clone().lerp(new THREE.Color(0xfff5df), 0.65);
-      const opacity = broken ? 0.14 : 0.28;
+    // Mist fades by dilution; the mass-carrying fragments never expire.
+    const mistOrigin = options.position.clone();
+    if (options.kind === 'target') mistOrigin.z = -11.97;
+    for (let i = 0; i < 6; i++) {
+      const opacity = 0.12;
       const material = new THREE.SpriteMaterial({
-        map: dustTexture, color: mistColor,
+        map: mistTexture, color: fleshColor.clone().lerp(new THREE.Color(0xfff5df), 0.65),
         transparent: true, opacity, depthWrite: false,
       });
       const sprite = new THREE.Sprite(material);
-      sprite.position.copy(origin);
-      const size = vegetableRadius * (1.5 + random() * 3.5);
+      sprite.position.copy(mistOrigin);
+      const size = radius * (1.5 + random() * 3);
       sprite.scale.setScalar(size);
       root.add(sprite);
-      dust.push({ sprite, velocity: new THREE.Vector3(
-        (random() - 0.5) * velocityScale * 0.15,
-        0.1 + random() * velocityScale * 0.1,
-        random() * velocityScale * 0.1,
-      ), size, opacity, age: 0, life: 0.55 + random() * 0.65 });
+      mist.push({ sprite, velocity: new THREE.Vector3((random() - 0.5) * 2, random() * 1.5, random() * 1.5),
+        size, opacity, age: 0, life: 0.55 + random() * 0.65 });
     }
-
-    if (broken && !isGround) {
-      createTargetSplat(options, skinColor, vegetableRadius, severity);
-    }
-
-    // Populate the initial matrices before the first rendered impact frame.
-    updateSpray(0);
+    if (options.kind === 'target') createTargetSplat(options, skinColor, radius, severity);
   }
 
   function createTargetSplat(options: ImpactOptions, color: THREE.Color, radius: number, severity: number) {
@@ -313,10 +251,8 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
     const size = Math.max(0.5, radius * 9, holeRadius * 3.6);
     const pixelsPerMeter = 512 / size;
     const holePixels = holeRadius * pixelsPerMeter;
-    const wetColor = color.clone().multiplyScalar(0.82);
-    context.fillStyle = `#${wetColor.getHexString()}`;
-    // Irregular islands, rather than an opaque circular billboard. A breached
-    // target explicitly clears the entire hole, including antialiased edges.
+    context.fillStyle = `#${color.clone().multiplyScalar(0.82).getHexString()}`;
+    // Peripheral wet islands retain a clear view through a breached target.
     for (let i = 0; i < 100; i++) {
       const theta = random() * Math.PI * 2;
       const distance = holePixels + 5 + random() ** 1.8 * Math.max(20, 210 - holePixels);
@@ -356,87 +292,42 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
     root.add(splat);
   }
 
-  function updateSpray(dt: number) {
-    if (!spray) return;
-    let living = 0;
-    for (let i = 0; i < droplets.length; i++) {
-      const particle = droplets[i];
-      particle.age += dt;
-      if (particle.age < particle.life) {
-        living++;
-        // Quadratic drag for small wet fragments; no superelastic bouncing.
-        const drag = 3 * 1.204 * 0.47 / (8 * 1000 * particle.radius);
-        particle.velocity.multiplyScalar(1 / (1 + drag * particle.velocity.length() * dt));
-        particle.velocity.y -= 9.80665 * dt;
-        particle.position.addScaledVector(particle.velocity, dt);
-        if (particle.position.y < particle.radius) {
-          particle.position.y = particle.radius;
-          particle.velocity.y = 0;
-          particle.velocity.x *= Math.max(0, 1 - dt * 10);
-          particle.velocity.z *= Math.max(0, 1 - dt * 10);
-        }
-        const fade = Math.min(1, (particle.life - particle.age) / 0.5);
-        instanceTransform.position.copy(particle.position);
-        instanceTransform.scale.set(particle.radius * fade, particle.radius * fade * 0.75, particle.radius * fade);
-      } else instanceTransform.scale.setScalar(0);
+  function renderFragments() {
+    if (!fragments || !cloud) return;
+    cloud.particles.forEach((particle, i) => {
+      const style = styles[i];
+      const adhering = particle.kind === 'deposit' && depositsOnTarget;
+      instanceTransform.position.set(particle.position.x, particle.position.y, particle.position.z);
+      instanceTransform.scale.copy(style.scale).multiplyScalar(particle.radiusM);
+      if (particle.landed && !adhering) {
+        // Flatten wet pulp on the ground while retaining visible resting bits.
+        instanceTransform.scale.y *= 0.45;
+        instanceTransform.position.y = instanceTransform.scale.y + 0.001;
+        instanceTransform.rotation.set(0, style.rotation.y, 0);
+      } else {
+        if (adhering) instanceTransform.position.z = -11.994 + instanceTransform.scale.z;
+        instanceTransform.rotation.set(
+        style.rotation.x + style.spin.x * cloud!.elapsedSeconds,
+        style.rotation.y + style.spin.y * cloud!.elapsedSeconds,
+        style.rotation.z + style.spin.z * cloud!.elapsedSeconds,
+        );
+      }
       instanceTransform.updateMatrix();
-      spray.setMatrixAt(i, instanceTransform.matrix);
-    }
-    spray.instanceMatrix.needsUpdate = true;
-    if (!living) {
-      root.remove(spray);
-      spray.geometry.dispose();
-      spray.material.dispose();
-      spray = null;
-      droplets.length = 0;
-    }
+      fragments!.setMatrixAt(i, instanceTransform.matrix);
+    });
+    fragments.instanceMatrix.needsUpdate = true;
   }
 
   function update(realDelta: number) {
-    const dt = Math.min(0.05, Math.max(0, realDelta));
-    updateSpray(dt);
-    if (physics && chunks.length) {
-      accumulator += dt;
-      while (accumulator >= 1 / 120) {
-        physics.step();
-        accumulator -= 1 / 120;
-      }
+    const dt = Number.isFinite(realDelta) ? Math.max(0, realDelta) : 0;
+    if (cloud) {
+      stepAftermath(cloud, dt);
+      renderFragments();
     }
-    for (let i = chunks.length - 1; i >= 0; i--) {
-      const chunk = chunks[i];
-      chunk.age += dt;
-      if (chunk.age >= chunk.life) {
-        removeChunk(i);
-        continue;
-      }
-      if (chunk.body) {
-        const position = chunk.body.translation();
-        const rotation = chunk.body.rotation();
-        chunk.mesh.position.set(position.x, position.y, position.z);
-        chunk.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-      } else {
-        chunk.velocity.y -= 9.80665 * dt;
-        chunk.mesh.position.addScaledVector(chunk.velocity, dt);
-        chunk.mesh.rotation.x += chunk.spin.x * dt;
-        chunk.mesh.rotation.y += chunk.spin.y * dt;
-        chunk.mesh.rotation.z += chunk.spin.z * dt;
-        if (chunk.mesh.position.y < chunk.radius) {
-          chunk.mesh.position.y = chunk.radius;
-          chunk.velocity.y = Math.abs(chunk.velocity.y) * 0.18;
-          chunk.velocity.x *= 0.75;
-          chunk.velocity.z *= 0.75;
-          chunk.spin.multiplyScalar(0.7);
-        }
-      }
-      chunk.mesh.material.opacity = Math.min(1, (chunk.life - chunk.age) / 0.65);
-    }
-    for (let i = dust.length - 1; i >= 0; i--) {
-      const particle = dust[i];
+    for (let i = mist.length - 1; i >= 0; i--) {
+      const particle = mist[i];
       particle.age += dt;
-      if (particle.age >= particle.life) {
-        removeDust(i);
-        continue;
-      }
+      if (particle.age >= particle.life) { removeMist(i); continue; }
       particle.sprite.position.addScaledVector(particle.velocity, dt);
       particle.velocity.multiplyScalar(Math.max(0, 1 - dt * 1.5));
       const ratio = particle.age / particle.life;
@@ -445,12 +336,32 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
     }
   }
 
+  function getFollowTarget(): FollowTarget | null {
+    if (!cloud || followedParticleId === null) return null;
+    const representative = cloud.particles.find(particle => particle.id === followedParticleId);
+    if (!representative) return null;
+    let localMass = 0;
+    let localVariance = 0;
+    for (const particle of cloud.particles) {
+      if (particle.kind !== 'forward') continue;
+      const distanceSq = (particle.position.x - representative.position.x) ** 2
+        + (particle.position.y - representative.position.y) ** 2
+        + (particle.position.z - representative.position.z) ** 2;
+      if (distanceSq > 0.8 ** 2) continue;
+      localMass += particle.massKg;
+      localVariance += (distanceSq + particle.radiusM ** 2) * particle.massKg;
+    }
+    return {
+      position: new THREE.Vector3(representative.position.x, representative.position.y, representative.position.z),
+      velocity: new THREE.Vector3(representative.velocity.x, representative.velocity.y, representative.velocity.z),
+      radius: THREE.MathUtils.clamp(Math.sqrt(localVariance / Math.max(1e-12, localMass)), 0.08, 0.35),
+      landed: representative.landed,
+    };
+  }
+
   function setTrail(points: THREE.Vector3[]) {
     const count = Math.min(points.length, trailCapacity);
-    if (count < 2) {
-      trailGeometry.setDrawRange(0, 0);
-      return;
-    }
+    if (count < 2) { trailGeometry.setDrawRange(0, 0); return; }
     for (let i = 0; i < count; i++) {
       const point = points[Math.round(i * (points.length - 1) / (count - 1))];
       trailPositions[i * 3] = point.x;
@@ -461,23 +372,13 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
     trailGeometry.setDrawRange(0, count);
   }
 
-  function clear() {
-    clearParticles();
-    trailGeometry.setDrawRange(0, 0);
-  }
-
+  function clear() { clearParticles(); trailGeometry.setDrawRange(0, 0); }
   function dispose() {
-    disposed = true;
     clear();
     scene.remove(root);
     trailGeometry.dispose();
     trailMaterial.dispose();
-    dustTexture.dispose();
-    physics?.free();
-    physics = null;
+    mistTexture.dispose();
   }
-
-  // Flight and input are ready immediately; debris upgrades after WASM loads.
-  void initializeDebrisPhysics();
-  return { update, impact, setTrail, clear, dispose };
+  return { update, impact, setTrail, getFollowTarget, clear, dispose };
 }

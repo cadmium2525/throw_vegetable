@@ -255,9 +255,17 @@ function frame(now: number) {
       aftermathElapsed += aftermathDelta;
       if (aftermathElapsed >= 0.6) revealResult();
     }
-    const visualDelta = Math.min(aftermathDelta, 0.05) * (isReplay && (state === 'impact' || state === 'result') ? playbackSpeed : 1);
+    const visualDelta = aftermathDelta * (isReplay && (state === 'impact' || state === 'result') ? playbackSpeed : 1);
     effects.update(visualDelta);
     world.update(visualDelta);
+    if ((state === 'impact' || state === 'result') && damage?.target === 'breached') {
+      const remnants = effects.getFollowTarget();
+      if (remnants) {
+        chaseCamera.followAftermath(remnants.position, remnants.velocity, remnants.radius, remnants.landed);
+        const hint = remnants.landed ? '破片が的の奥に着地' : '的の奥へ進む破片を追跡中';
+        if ($('control-hint').textContent !== hint) $('control-hint').textContent = hint;
+      }
+    }
     chaseCamera.update(Math.min(delta, 0.05));
     world.render();
   }
