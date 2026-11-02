@@ -1,4 +1,5 @@
-/** SI units throughout. Rigid-vegetable approximation; see docs/physics.md. */
+import { breakupRate, type BreakupSettings } from './flow.ts';
+/** SI units throughout. Reduced-order flight / fragment-cloud approximation. */
 export interface Vec3 { x: number; y: number; z: number }
 
 export interface Vegetable {
@@ -46,6 +47,18 @@ export interface SimulationOptions {
   /** Vacuum mode is for numerical verification and comparison. */
   drag?: boolean;
   stepSeconds?: number;
+  /** Omitted = fixed shape. Effective strength and piece count are assumptions. */
+  breakup?: BreakupSettings;
+}
+
+export interface BreakupEvent {
+  time: number;
+  position: Vec3;
+  speedKmh: number;
+  strengthPa: number;
+  fragmentCount: number;
+  fragmentRadiusM: number;
+  areaMultiplier: number;
 }
 
 export interface TrajectorySample {
@@ -81,6 +94,7 @@ export interface ThrowResult {
   samples: TrajectorySample[];
   impact: Impact;
   targetPlaneCrossing?: TrajectorySample;
+  breakup?: BreakupEvent;
 }
 
 type State = readonly [number, number, number, number, number, number];
@@ -245,6 +259,10 @@ export function simulateThrow(input: ThrowInput, options: SimulationOptions = {}
     throw new RangeError('Integration step must be greater than 0 and at most 0.02 seconds.');
   }
   const speedKmh = clamp(input.speedKmh, 0, 2000);
+  if (options.breakup && (!Number.isFinite(options.breakup.strengthPa) || options.breakup.strengthPa <= 0
+    || !Number.isInteger(options.breakup.fragmentCount) || options.breakup.fragmentCount < 2 || options.breakup.fragmentCount > 128)) {
+    throw new RangeError('Breakup requires positive strength and 2–128 integer fragments.');
+  }
   const speed = speedKmh / 3.6;
   const angle = clamp(input.angleDeg, -89, 89) * Math.PI / 180;
   const azimuth = clamp(input.azimuthDeg ?? 0, -89, 89) * Math.PI / 180;
@@ -255,9 +273,12 @@ export function simulateThrow(input: ThrowInput, options: SimulationOptions = {}
   let impact: Impact | undefined;
   let targetPlaneCrossing: TrajectorySample | undefined;
   let nextSampleTime = 1 / 500;
+  let breakup: BreakupEvent | undefined;
+  let exposure = 0;
+  let aerodynamicBody = vegetable;
   while (t < PHYSICS.maxFlightSeconds - 1e-10) {
     const dt = Math.min(requestedStep, PHYSICS.maxFlightSeconds - t);
-    const next = rk4(state, dt, vegetable, options.drag !== false);
+    const next = rk4(state, dt, aerodynamicBody, options.drag !== false);
     const groundFraction = next[1] <= vegetable.radiusM && state[1] > vegetable.radiusM
       ? (state[1] - vegetable.radiusM) / (state[1] - next[1])
       : undefined;
@@ -276,11 +297,27 @@ export function simulateThrow(input: ThrowInput, options: SimulationOptions = {}
       const crossingFraction = (-PHYSICS.targetDistance - state[2]) / (next[2] - state[2]);
       if (crossingFraction <= actualFraction) targetPlaneCrossing = toSample(interpolateState(state, next, crossingFraction), t + dt * crossingFraction);
     }
+    const oldSpeed = Math.hypot(state[3], state[4], state[5]);
     state = actualFraction === 1 ? next : interpolateState(state, next, actualFraction);
     t += dt * actualFraction;
     const sample = toSample(state, t);
+    if (options.breakup && !breakup && fraction === undefined && options.drag !== false) {
+      const settings = options.breakup;
+      exposure += dt * 0.5 * (breakupRate(oldSpeed, vegetable.radiusM, vegetable.massKg, settings.strengthPa)
+        + breakupRate(sample.speedKmh / 3.6, vegetable.radiusM, vegetable.massKg, settings.strengthPa));
+      if (exposure >= 1) {
+        // Equal-mass pieces inherit the mean velocity: no invented explosion
+        // energy or momentum. Area grows as N^(1/3) at conserved total volume.
+        const areaMultiplier = Math.cbrt(settings.fragmentCount);
+        breakup = { time: t, position: { ...sample.position }, speedKmh: sample.speedKmh,
+          strengthPa: settings.strengthPa, fragmentCount: settings.fragmentCount,
+          fragmentRadiusM: vegetable.radiusM / areaMultiplier, areaMultiplier };
+        aerodynamicBody = { ...vegetable, areaM2: vegetable.areaM2 * areaMultiplier };
+        samples.push(sample);
+      }
+    }
     maxDynamicPressurePa = Math.max(maxDynamicPressurePa, sample.dynamicPressurePa);
-    if (t + 1e-10 >= nextSampleTime || fraction !== undefined) {
+    if ((t + 1e-10 >= nextSampleTime || fraction !== undefined) && samples[samples.length - 1].t !== sample.t) {
       samples.push(sample);
       nextSampleTime = t + 1 / 500;
     }
@@ -303,6 +340,7 @@ export function simulateThrow(input: ThrowInput, options: SimulationOptions = {}
     samples,
     impact,
     targetPlaneCrossing,
+    breakup,
   };
 }
 

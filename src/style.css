@@ -60,6 +60,14 @@ footer{font-size:11px;letter-spacing:.6px}
 .city-metrics{margin:12px 0;font-size:17px}
 .city-metrics>div{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid #d8ddcf}
 .city-metrics dd{font-weight:700;margin:0;white-space:nowrap}
+.material-settings{margin:20px 0;font-size:17px;border-top:1px solid #d8ddcf;padding-top:14px}
+.material-settings summary{cursor:pointer;font-weight:700}
+.material-settings p{font-size:14px;line-height:1.6;margin:9px 0 16px}
+.toggle-label{display:flex;gap:10px;align-items:center;margin:18px 0;font-size:17px}
+.toggle-label input{width:22px;height:22px;accent-color:#3e7770}
+.material-settings select{font:inherit;padding:8px;border:1px solid #a7b4aa;border-radius:6px;background:#fff;width:100%;margin-top:8px}
+#settings-dialog{max-height:85dvh;overflow:auto}
+@media(max-width:700px){.city-metrics{font-size:15px}.city-metrics dd{white-space:normal;text-align:right}.city-metrics dt{max-width:58%}}
 #city-report h3{font-size:18px;margin:22px 0 8px}
 #city-report-button{display:block;margin-top:14px}
 #city-dialog,#model-dialog{max-height:85dvh;overflow:auto}
@@ -89,3 +97,5 @@ footer{font-size:11px;letter-spacing:.6px}
   .outcome .result-metrics{gap:8px}
   .has-result .wave-key{display:none}
 }
+
+.model-comparison{font-size:18px;font-weight:700;line-height:1.7;background:#e4eadd;border-radius:8px;padding:12px 14px}
