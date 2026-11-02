@@ -11,6 +11,8 @@ export interface CityHit { surface: CitySurface; fraction: number; position: Vec
 export interface CityDamage { hits: number; absorbedEnergyJ: number; peakNormalEnergyJ: number; state: 'marked' | 'cracked' | 'broken' }
 /** Illustrative per-parcel thresholds, NOT glass strength measurements. */
 export const CITY_ASSUMPTIONS = Object.freeze({ glassCrackJ: 8, glassBreakJ: 35, signBendJ: 40 });
+/** Sidewalk recess between the buildings ending at z=-17 and starting at z=-21. */
+export const BUS_SHELTER = Object.freeze({ backX: 6.25, frontX: 4.7, centerZ: -19, height: 2.6 });
 
 export function createCitySurfaces(): CitySurface[] {
   const surfaces: CitySurface[] = [];
@@ -22,8 +24,8 @@ export function createCitySurfaces(): CitySurface[] {
       surfaces.push({ id: `glass-${side}-${row}-${pane}`, kind: 'glass', min: { x: face - 0.015, y: 0.65, z: centerZ - 1.1 }, max: { x: face + 0.015, y: 2.65, z: centerZ + 1.1 }, normalAxis: 'x' });
     }
   }
-  // A glass bus shelter beyond the plywood makes secondary impacts inspectable.
-  for (let i = 0; i < 3; i++) surfaces.push({ id: `shelter-${i}`, kind: 'glass', min: { x: -2.4 + i * 1.6, y: 0.35, z: -24.03 }, max: { x: -0.84 + i * 1.6, y: 3.1, z: -24 }, normalAxis: 'z' });
+  // Back glazing runs along the road, entirely outside its 4.5 m half-width.
+  for (let i = 0; i < 3; i++) surfaces.push({ id: `shelter-${i}`, kind: 'glass', min: { x: BUS_SHELTER.backX - 0.015, y: 0.35, z: BUS_SHELTER.centerZ - 1.65 + i * 1.1 }, max: { x: BUS_SHELTER.backX + 0.015, y: 2.45, z: BUS_SHELTER.centerZ - 0.59 + i * 1.1 }, normalAxis: 'x' });
   surfaces.push({ id: 'street-sign', kind: 'sign', min: { x: 3.4, y: 1.2, z: -17.1 }, max: { x: 4.3, y: 2.2, z: -17.04 }, normalAxis: 'z' });
   return surfaces;
 }
@@ -71,7 +73,7 @@ export class CityExperiment {
 
 export const CITY_OBSERVERS = [
   { name: '歩道', position: { x: -4.4, y: 1.6, z: -6 } },
-  { name: '停留所', position: { x: 2.7, y: 1.6, z: -24 } },
+  { name: '停留所', position: { x: 5.2, y: 1.6, z: BUS_SHELTER.centerZ } },
   { name: '交差点', position: { x: 4.4, y: 1.6, z: -42 } },
 ] as const;
 

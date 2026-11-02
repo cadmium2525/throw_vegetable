@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CITY_OBSERVERS, type CityExperiment } from '../simulation/city';
+import { BUS_SHELTER, CITY_OBSERVERS, type CityExperiment } from '../simulation/city';
 import { createWaveEmissions, firstWaveArrival, waveRadius, type WaveEmission } from '../simulation/waves';
 import type { ThrowResult } from '../simulation/physics';
 
@@ -62,9 +62,15 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
       lines.visible = false; root.add(lines); fractureLines.set(surface.id, lines);
     }
   }
-  // Shelter roof and frame; the three panes are in the collision model above.
-  block(0, 3.25, -23.5, 5.2, 0.16, 1.8, '#506f70');
-  for (const x of [-2.5, 2.5]) block(x, 1.6, -24.1, 0.09, 3.2, 0.09, '#506f70');
+  // Sidewalk shelter, open toward the road; back panes share collision geometry.
+  const shelter = BUS_SHELTER;
+  block(5.55, -0.015, shelter.centerZ, 2.3, 0.05, 3.8, '#c6c6b5');
+  block(5.5, shelter.height, shelter.centerZ, 1.9, 0.16, 3.7, '#506f70').name = 'shelter-roof';
+  for (const x of [shelter.frontX, shelter.backX]) for (const dz of [-1.7, 1.7]) {
+    block(x, shelter.height / 2, shelter.centerZ + dz, 0.07, shelter.height, 0.07, '#506f70');
+  }
+  block(5.95, 0.48, shelter.centerZ, 0.42, 0.09, 2.5, '#a38360');
+  for (const dz of [-0.9, 0.9]) block(5.95, 0.23, shelter.centerZ + dz, 0.08, 0.46, 0.08, '#506f70');
   block(3.85, 0.65, -17.1, 0.08, 1.3, 0.08, '#758583');
   // Restrained street furniture establishes human scale without people.
   for (let z = 6; z > -100; z -= 28) for (const side of [-1, 1]) {
