@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { createWorld } from './render/world';
 import { createVegetable } from './render/vegetables';
 import { createEffects, type ThrowEffects } from './render/effects';
+import { createChaseCamera } from './render/chase-camera';
+import { getImpactResponse } from './simulation/impact';
+import { playbackRate, flightTimeAt } from './simulation/playback';
 import { VEGETABLES, PHYSICS, simulateThrow, sampleTrajectory, type ThrowResult } from './simulation/physics';
 import './style.css';
 
@@ -28,7 +31,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <section class="speed-readout" aria-label="投げる速度"><div class="eyebrow" id="speed-label">投げる速度</div><div class="speed-number"><span id="speed">0</span><span class="speed-unit">km/h</span></div><div class="mach-line"><span id="mach">MACH 0.00</span><span class="supersonic" id="supersonic" hidden>超音速</span></div></section>
     <div class="range-info"><span class="live-dot"></span>15°C<span class="info-divider">/</span>無風<span class="info-divider">/</span>的まで <strong>12 m</strong></div>
     <div class="flight-tag" id="flight-tag" hidden></div>
-    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ スローで見る</button><span class="effect-note">破壊表現は演出</span></section>
+    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ スローで見る</button><span class="effect-note">12mm合板 · 破壊は推定演出</span></section>
     <div class="scene-message" id="scene-message" role="status">実験場を準備中…</div>
     <div class="control-dock">
       <section class="vegetable-panel" aria-labelledby="vegetable-heading"><div class="panel-heading"><h2 id="vegetable-heading"><span class="step-number">01</span> 野菜を選ぶ</h2><span class="mass" id="mass">150 g</span></div><div class="vegetable-list" id="vegetable-list">${VEGETABLES.map((v, i) => `<button class="vegetable-button${i === 0 ? ' selected' : ''}" data-vegetable="${v.id}" aria-pressed="${i === 0}" aria-label="${v.name}を選ぶ">${vegetableIcon(v.id)}<span>${v.name}</span></button>`).join('')}</div></section>
@@ -36,8 +39,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </div>
   </main>
   <footer><span>0 → 2000 km/h <span class="footer-dot">·</span> VEGETABLE VELOCITY LAB</span><span>重力・空気抵抗を計算 <span class="footer-dot">·</span> 剛体の近似モデル</span></footer>
-  <dialog id="settings-dialog"><div class="dialog-heading"><h2>実験設定</h2><button class="close-button" data-close="settings-dialog" aria-label="設定を閉じる">×</button></div><form id="experiment-form"><label class="input-label" for="exact-speed">速度を指定</label><div class="number-input"><input type="number" id="exact-speed" min="0" max="2000" step="1" value="2000" required inputmode="numeric"><span>km/h</span></div><div class="presets">${[0, 100, 1000, 2000].map(v => `<button type="button" data-preset="${v}">${v}</button>`).join('')}</div><label class="input-label angle-label" for="angle">投げる角度 <output id="angle-output">2°</output></label><input type="range" id="angle" min="-3" max="5" step="1" value="2"><div class="range-labels"><span>−3°</span><span>5°</span></div><button type="submit" class="throw-button exact-throw"><span>この速度で投げる</span>${arrow}</button></form><p class="dialog-note">野菜は一定の形で飛ぶ近似。<br>高速での変形・破砕は計算しません。</p></dialog>
-  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>野菜は剛体として扱います。実際の変形・破砕・貫通や衝撃波の強さは予測しません。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a></dialog>
+  <dialog id="settings-dialog"><div class="dialog-heading"><h2>実験設定</h2><button class="close-button" data-close="settings-dialog" aria-label="設定を閉じる">×</button></div><form id="experiment-form"><label class="input-label" for="exact-speed">速度を指定</label><div class="number-input"><input type="number" id="exact-speed" min="0" max="2000" step="1" value="2000" required inputmode="numeric"><span>km/h</span></div><div class="presets">${[0, 100, 1000, 2000].map(v => `<button type="button" data-preset="${v}">${v}</button>`).join('')}</div><label class="input-label angle-label" for="angle">投げる角度 <output id="angle-output">2°</output></label><input type="range" id="angle" min="-3" max="5" step="1" value="2"><div class="range-labels"><span>−3°</span><span>5°</span></div><button type="submit" class="throw-button exact-throw"><span>この速度で投げる</span>${arrow}</button></form><p class="dialog-note">通常は実時間。スローは再生時のみ。<br>破壊は材質を仮定した演出です。</p></dialog>
+  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>飛行中は剛体の近似。衝突後は野菜の崩壊と12mm合板の破損をエネルギーから推定表示します。実測で検証された破壊予測ではありません。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a></dialog>
 `;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -48,19 +51,23 @@ const modelDialog = $<HTMLDialogElement>('model-dialog');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let selectedId = 'tomato';
 let angleDeg = 2;
-let state: 'loading' | 'ready' | 'flying' | 'result' = 'loading';
+let state: 'loading' | 'ready' | 'flying' | 'impact' | 'result' = 'loading';
 let meterClock = 0.2;
 let gaugeSpeed = 400;
 let result: ThrowResult | null = null;
 let shotNumber = 0;
 let flightElapsed = 0;
-let playbackDuration = 1.2;
+let playbackSpeed = 1;
+let aftermathElapsed = 0;
+let damage: ReturnType<typeof getImpactResponse> | null = null;
 let isReplay = false;
 let sound = false;
 let audio: AudioContext | null = null;
 let world: ReturnType<typeof createWorld>;
 let effects: ThrowEffects;
 let projectile: THREE.Group;
+let chaseCamera: ReturnType<typeof createChaseCamera>;
+let projectileRadius = 0.05;
 let animationId = 0;
 let lastFrame = performance.now();
 let hidden = document.hidden;
@@ -93,15 +100,18 @@ function makeProjectile() {
   projectile = createVegetable(selectedId);
   projectile.position.set(0, PHYSICS.launchHeight, 0);
   world.scene.add(projectile);
+  projectileRadius = new THREE.Box3().setFromObject(projectile).getBoundingSphere(new THREE.Sphere()).radius;
 }
 
 function ready() {
   state = 'ready';
   result = null;
+  damage = null;
   effects.clear();
   trailPoints.length = 0;
   world.resetTarget();
   makeProjectile();
+  chaseCamera.follow(projectile.position, new THREE.Vector3(0, 0, -1), projectileRadius);
   $('outcome').hidden = true;
   $('flight-tag').hidden = true;
   $('control-hint').textContent = 'タップで速度を決定';
@@ -143,14 +153,16 @@ function launch(speed: number, replay = false) {
   isReplay = replay;
   state = 'flying';
   flightElapsed = 0;
-  playbackDuration = THREE.MathUtils.clamp(result.impact.time, replay ? 3 : 1.1, replay ? 5 : 3.5);
+  aftermathElapsed = 0;
+  playbackSpeed = playbackRate(result.impact.time, replay);
+  lastFrame = performance.now();
   effects.clear();
   world.resetTarget();
   trailPoints.length = 0;
   makeProjectile();
+  chaseCamera.follow(projectile.position, new THREE.Vector3(0, 0, -1), projectileRadius);
   $('outcome').hidden = true;
-  const rate = result.impact.time / playbackDuration;
-  $('flight-tag').textContent = `${replay ? 'REPLAY' : 'FLIGHT'}  ·  ${rate < 0.95 ? `×${rate < 0.01 ? rate.toFixed(3) : rate.toFixed(2)} スロー` : rate > 1.05 ? `×${rate.toFixed(1)}` : '実時間'}`;
+  $('flight-tag').textContent = replay ? `REPLAY · ×${playbackSpeed.toFixed(3)}` : '実時間 · ×1';
   $('flight-tag').hidden = false;
   $('control-hint').textContent = '飛行中';
   document.body.classList.add('in-flight');
@@ -162,23 +174,38 @@ function launch(speed: number, replay = false) {
   $<HTMLButtonElement>('settings-button').disabled = true;
   settingsDialog.close();
   tone('launch');
+  // Present the close-up launch pose even when the whole flight lasts two frames.
+  world.render();
 }
 
-function finish() {
+function beginImpact() {
   if (!result) return;
-  state = 'result';
+  state = 'impact';
+  aftermathElapsed = 0;
   const hit = result.impact;
-  if (hit.speedKmh >= 40) projectile.visible = false;
+  damage = getImpactResponse({ massKg: result.vegetable.massKg, speedKmh: hit.speedKmh, normalEnergyJ: hit.normalEnergyJ, kind: hit.kind, vegetableId: result.vegetable.id, radiusM: result.vegetable.radiusM });
+  if (damage.vegetable !== 'intact') projectile.visible = false;
   else if (hit.kind === 'ground') {
     projectile.rotation.z = Math.PI / 2;
     projectile.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(projectile);
     projectile.position.y += 0.008 - bounds.min.y;
   }
-  effects.impact({ position: new THREE.Vector3(hit.contactPoint.x, hit.contactPoint.y, hit.contactPoint.z + (hit.kind === 'target' ? 0.08 : 0)), color: new THREE.Color(result.vegetable.color).getHex(), energyJ: hit.energyJ, kind: hit.kind, speedKmh: hit.speedKmh });
-  if (hit.kind === 'target') world.setTargetDamage(hit.energyJ, hit.contactPoint.x, hit.contactPoint.y);
+  const point = new THREE.Vector3(hit.contactPoint.x, hit.contactPoint.y, hit.contactPoint.z);
+  effects.impact({ position: point.clone().add(new THREE.Vector3(0, hit.kind === 'ground' ? 0.01 : 0, hit.kind === 'target' ? 0.02 : 0)), color: new THREE.Color(result.vegetable.color).getHex(), energyJ: hit.energyJ, kind: hit.kind, speedKmh: hit.speedKmh, response: damage, vegetableId: result.vegetable.id, massKg: result.vegetable.massKg, radiusM: result.vegetable.radiusM, incomingVelocity: new THREE.Vector3(hit.velocity.x, hit.velocity.y, hit.velocity.z) });
+  if (hit.kind === 'target') world.setTargetDamage(hit.normalEnergyJ, hit.contactPoint.x, hit.contactPoint.y, damage);
+  chaseCamera.impact(point, hit.kind === 'target', damage.severity);
+  $('flight-tag').textContent = isReplay ? `IMPACT · ×${playbackSpeed.toFixed(3)}` : '実時間 · ×1';
+  $('control-hint').textContent = '衝突';
+  tone('impact', hit.energyJ);
+}
+
+function revealResult() {
+  if (!result || !damage) return;
+  state = 'result';
+  const hit = result.impact;
   $('result-eyebrow').textContent = `EXPERIMENT ${String(shotNumber).padStart(3, '0')}${isReplay ? ' · REPLAY' : ''}`;
-  $('result-title').textContent = hit.kind === 'target' ? '命中。' : hit.kind === 'ground' ? '地面に着地。' : '範囲外。';
+  $('result-title').textContent = hit.kind === 'target' ? damage.target === 'breached' ? '的に穴。' : damage.target === 'cracked' ? '的が割れた。' : '命中。' : hit.kind === 'ground' ? '地面に着地。' : '範囲外。';
   $('impact-speed').innerHTML = `${number(hit.speedKmh)} <small>km/h</small>`;
   $('impact-energy').innerHTML = hit.energyJ >= 1000 ? `${number(hit.energyJ / 1000, 1)} <small>kJ</small>` : `${number(hit.energyJ, 1)} <small>J</small>`;
   $('impact-time').innerHTML = `${number(hit.time, 3)} <small>s</small>`;
@@ -191,13 +218,13 @@ function finish() {
   throwButton.querySelector('span')!.textContent = 'もう一投';
   document.querySelectorAll<HTMLButtonElement>('[data-vegetable]').forEach(b => b.disabled = false);
   $<HTMLButtonElement>('settings-button').disabled = false;
-  tone('impact', hit.energyJ);
 }
 
 function frame(now: number) {
-  const delta = Math.min((now - lastFrame) / 1000, 0.05);
+  const delta = Math.max(0, (now - lastFrame) / 1000);
   lastFrame = now;
   if (!hidden) {
+    let aftermathDelta = delta;
     if (state === 'ready' && !settingsDialog.open && !modelDialog.open) {
       meterClock += delta * 0.57;
       gaugeSpeed = Math.round(2000 * (1 - Math.abs(meterClock % 2 - 1)));
@@ -206,20 +233,32 @@ function frame(now: number) {
         projectile.rotation.y += delta * 0.45;
         projectile.position.y = PHYSICS.launchHeight + Math.sin(now * 0.0015) * 0.025;
       }
+      chaseCamera.follow(projectile.position, new THREE.Vector3(0, 0, -1), projectileRadius);
     }
     if (state === 'flying' && result) {
       flightElapsed += delta;
-      const t = Math.min(flightElapsed / playbackDuration, 1) * result.impact.time;
+      const t = flightTimeAt(flightElapsed, playbackSpeed, result.impact.time);
       const sample = sampleTrajectory(result, t);
       projectile.position.set(sample.position.x, sample.position.y, sample.position.z);
       projectile.rotation.x = t * 5;
       projectile.rotation.z = t * 3;
+      chaseCamera.follow(projectile.position, new THREE.Vector3(sample.velocity.x, sample.velocity.y, sample.velocity.z), projectileRadius);
       trailPoints.push(projectile.position.clone());
       if (trailPoints.length > 180) trailPoints.shift();
       effects.setTrail(trailPoints);
-      if (flightElapsed >= playbackDuration) finish();
+      if (t >= result.impact.time) {
+        beginImpact();
+        aftermathDelta = Math.max(0, flightElapsed - result.impact.time / playbackSpeed);
+      }
     }
-    effects.update(delta);
+    if (state === 'impact') {
+      aftermathElapsed += aftermathDelta;
+      if (aftermathElapsed >= 0.6) revealResult();
+    }
+    const visualDelta = Math.min(aftermathDelta, 0.05) * (isReplay && (state === 'impact' || state === 'result') ? playbackSpeed : 1);
+    effects.update(visualDelta);
+    world.update(visualDelta);
+    chaseCamera.update(Math.min(delta, 0.05));
     world.render();
   }
   animationId = requestAnimationFrame(frame);
@@ -240,7 +279,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => 
 $('experiment-form').addEventListener('submit', event => { event.preventDefault(); const input = $<HTMLInputElement>('exact-speed'); if (input.checkValidity() && state !== 'loading' && state !== 'flying') launch(Number(input.value)); });
 $('vegetable-list').addEventListener('click', event => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-vegetable]');
-  if (!button || state === 'flying' || state === 'loading') return;
+  if (!button || state === 'flying' || state === 'impact' || state === 'loading') return;
   selectedId = button.dataset.vegetable!;
   const vegetable = VEGETABLES.find(v => v.id === selectedId)!;
   $('mass').textContent = vegetable.massKg >= 1 ? `${vegetable.massKg} kg` : `${Math.round(vegetable.massKg * 1000)} g`;
@@ -267,6 +306,7 @@ sceneContainer.addEventListener('rendercontextrestored', () => { hidden = docume
 async function boot() {
   try {
     world = createWorld(sceneContainer);
+    chaseCamera = createChaseCamera(world.camera, reducedMotion);
     world.render();
     effects = await createEffects(world.scene);
     ready();

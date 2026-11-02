@@ -6,10 +6,17 @@ export interface WorldView {
   camera: THREE.PerspectiveCamera;
   targetGroup: THREE.Group;
   render: () => void;
+  update: (dtSeconds: number) => void;
   resize: () => void;
   dispose: () => void;
-  setTargetDamage: (energy: number, hitX?: number, hitY?: number) => void;
+  setTargetDamage: (energy: number, hitX?: number, hitY?: number, response?: TargetDamageResponse) => void;
   resetTarget: () => void;
+}
+
+export interface TargetDamageResponse {
+  target: 'none' | 'dent' | 'cracked' | 'breached';
+  holeRadiusM: number;
+  severity: number;
 }
 
 const palette = {
@@ -62,6 +69,272 @@ function labelTexture(text: string, subtitle?: string): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+/**
+ * A thin, painted plywood disk made of independent prism patches in one mesh.
+ * Damage removes real front/back/edge geometry. The appearance and splinter
+ * motion illustrate the supplied response; they are not a fracture solver.
+ */
+export function createPlywoodBoard() {
+  const group = new THREE.Group();
+  group.name = 'segmented-plywood-12mm';
+  type Patch = { x: number; y: number; vertices: number[]; paint: THREE.Color; phase: number };
+  type MovingPatch = { offset: number; length: number; x: number; y: number; axis: THREE.Vector3; angle: number; phase: number; shrink: number; dent: number };
+  type Splinter = { position: THREE.Vector3; velocity: THREE.Vector3; rotation: THREE.Euler; spin: THREE.Vector3; scale: THREE.Vector3; age: number };
+  const patches: Patch[] = [];
+  const paintColors = ['#d96b44', '#f6efda', '#d96b44', '#f6efda', '#839b75', '#f6efda'].map(c => new THREE.Color(c));
+  const paintBounds = [0.165, 0.38, 0.61, 0.85, 1.09, 1.3];
+  const woodColor = new THREE.Color('#bd9668');
+  const darkWoodColor = new THREE.Color('#a27b52');
+  const boardMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, flatShading: true });
+  const board = object(new THREE.BufferGeometry(), boardMaterial);
+  board.name = 'breakable-painted-plywood';
+  board.frustumCulled = false;
+  group.add(board);
+  const decals = new THREE.Group();
+  group.add(decals);
+  const dentMaterial = new THREE.MeshStandardMaterial({ color: '#795b3f', roughness: 1, polygonOffset: true, polygonOffsetFactor: -2 });
+  const crackMaterial = new THREE.LineBasicMaterial({ color: '#6b4f35' });
+
+  const radii = [0];
+  let lastRadius = 0;
+  for (const boundary of paintBounds) {
+    const steps = Math.ceil((boundary - lastRadius) / 0.08);
+    for (let step = 1; step <= steps; step++) radii.push(THREE.MathUtils.lerp(lastRadius, boundary, step / steps));
+    lastRadius = boundary;
+  }
+  const sectorCount = 64;
+  const faceZ = 0;
+  const backZ = -0.012;
+  for (let ring = 0; ring < radii.length - 1; ring++) {
+    const inner = radii[ring];
+    const outer = radii[ring + 1];
+    for (let sector = 0; sector < sectorCount; sector++) {
+      const a = sector * Math.PI * 2 / sectorCount;
+      const b = (sector + 1) * Math.PI * 2 / sectorCount;
+      const corners = [
+        [Math.cos(a) * inner, Math.sin(a) * inner],
+        [Math.cos(a) * outer, Math.sin(a) * outer],
+        [Math.cos(b) * outer, Math.sin(b) * outer],
+        [Math.cos(b) * inner, Math.sin(b) * inner],
+      ];
+      const vertices: number[] = [];
+      const triangle = (i: number, j: number, k: number, z: number) => {
+        for (const index of [i, j, k]) vertices.push(corners[index][0], corners[index][1], z);
+      };
+      // Front faces are counterclockwise from the throwing side (+z).
+      triangle(0, 1, 2, faceZ);
+      triangle(0, 2, 3, faceZ);
+      triangle(0, 2, 1, backZ);
+      triangle(0, 3, 2, backZ);
+      for (let edge = 0; edge < 4; edge++) {
+        const next = (edge + 1) % 4;
+        const p = corners[edge];
+        const q = corners[next];
+        vertices.push(p[0], p[1], faceZ, p[0], p[1], backZ, q[0], q[1], backZ);
+        vertices.push(p[0], p[1], faceZ, q[0], q[1], backZ, q[0], q[1], faceZ);
+      }
+      const radius = (inner + outer) / 2;
+      const angle = (a + b) / 2;
+      const colorIndex = paintBounds.findIndex(boundary => radius <= boundary);
+      patches.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, vertices, paint: paintColors[colorIndex], phase: Math.sin(sector * 12.9898 + ring * 78.233) * 43758.5453 % 1 });
+    }
+  }
+
+  let movingPatches: MovingPatch[] = [];
+  let originalPositions = new Float32Array();
+  let originalNormals = new Float32Array();
+  let damageElapsed = 0;
+  let damaged = false;
+  const splinters: Splinter[] = [];
+  const splinterMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.93, flatShading: true });
+  const splinterMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), splinterMaterial, 96);
+  splinterMesh.name = 'flying-plywood-splinters';
+  splinterMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  splinterMesh.castShadow = true;
+  splinterMesh.frustumCulled = false;
+  splinterMesh.count = 0;
+  group.add(splinterMesh);
+  const instanceDummy = new THREE.Object3D();
+  const rotation = new THREE.Quaternion();
+  const vertex = new THREE.Vector3();
+
+  function clearDecals() {
+    for (const child of [...decals.children]) {
+      decals.remove(child);
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) child.geometry.dispose();
+    }
+  }
+
+  function rebuild(x = 0, y = 0, response?: TargetDamageResponse): Patch[] {
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const removed: Patch[] = [];
+    movingPatches = [];
+    const severity = response ? THREE.MathUtils.clamp(response.severity, 0, 1) : 0;
+    const holeRadius = response?.target === 'breached' ? THREE.MathUtils.clamp(response.holeRadiusM, 0.045, 1.18) : 0;
+    const influence = holeRadius + (response?.target === 'cracked' ? 0.4 : 0.18 + severity * 0.22);
+    for (const patch of patches) {
+      const dx = patch.x - x;
+      const dy = patch.y - y;
+      const distance = Math.hypot(dx, dy);
+      const angle = Math.atan2(dy, dx);
+      const jaggedRadius = holeRadius * (1 + 0.08 * Math.sin(angle * 13 + 1.4) + 0.055 * Math.sin(angle * 7));
+      if (holeRadius && distance < jaggedRadius) { removed.push(patch); continue; }
+      const offset = positions.length;
+      positions.push(...patch.vertices);
+      for (let i = 0; i < patch.vertices.length; i += 3) {
+        const color = i < 18 ? patch.paint : i < 36 ? woodColor : darkWoodColor;
+        colors.push(color.r, color.g, color.b);
+      }
+      if (response && response.target !== 'none' && distance < influence && distance > holeRadius * 0.88) {
+        const falloff = 1 - THREE.MathUtils.clamp((distance - holeRadius) / Math.max(0.001, influence - holeRadius), 0, 1);
+        const isFracture = response.target === 'cracked' || response.target === 'breached';
+        movingPatches.push({
+          offset, length: patch.vertices.length, x: patch.x, y: patch.y,
+          axis: new THREE.Vector3(-dy, dx, 0).normalize(),
+          angle: isFracture ? falloff * (response.target === 'breached' ? 0.28 + severity * 0.62 : 0.06 + severity * 0.1) : 0,
+          phase: patch.phase * Math.PI * 2,
+          shrink: isFracture ? 1 - falloff * (response.target === 'breached' ? 0.09 : 0.025) : 1,
+          dent: response.target === 'dent' ? -0.006 * falloff : -0.012 * falloff,
+        });
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    const position = new THREE.Float32BufferAttribute(positions, 3);
+    position.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('position', position);
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    (geometry.getAttribute('normal') as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
+    originalPositions = new Float32Array(position.array);
+    originalNormals = new Float32Array(geometry.getAttribute('normal').array);
+    board.geometry.dispose();
+    board.geometry = geometry;
+    return removed;
+  }
+
+  function reset() {
+    clearDecals();
+    splinters.length = 0;
+    splinterMesh.count = 0;
+    damageElapsed = 0;
+    if (damaged) rebuild();
+    damaged = false;
+  }
+
+  function setDamage(energy: number, hitX = 0, hitY = 1.6, response?: TargetDamageResponse) {
+    reset();
+    const x = THREE.MathUtils.clamp(hitX, -1.3, 1.3);
+    const y = THREE.MathUtils.clamp(hitY - 1.6, -1.3, 1.3);
+    const safeEnergy = Math.max(0, Number.isFinite(energy) ? energy : 0);
+    const state: TargetDamageResponse = response ?? {
+      target: safeEnergy < 8 ? 'none' : safeEnergy < 250 ? 'dent' : safeEnergy < 1800 ? 'cracked' : 'breached',
+      holeRadiusM: THREE.MathUtils.clamp(Math.sqrt(safeEnergy) * 0.0027, 0.065, 1.05),
+      severity: THREE.MathUtils.clamp(Math.log10(safeEnergy + 1) / 5, 0, 1),
+    };
+    if (state.target === 'none') return;
+    damaged = true;
+    const removed = rebuild(x, y, state);
+    const random = seeded(Math.round(safeEnergy * 31) + 17);
+    if (state.target !== 'breached') {
+      const radius = Math.min(0.1, 0.025 + Math.log10(safeEnergy + 1) * 0.013);
+      const dent = object(new THREE.CircleGeometry(radius, 13), dentMaterial, false);
+      dent.position.set(x, y, 0.001);
+      decals.add(dent);
+    }
+    if (state.target === 'cracked' || state.target === 'breached') {
+      const positions: number[] = [];
+      const holeRadius = state.target === 'breached' ? state.holeRadiusM : 0.035;
+      const reach = Math.min(1, holeRadius + 0.28 + state.severity * 0.3);
+      for (let i = 0; i < 11; i++) {
+        const angle = i * Math.PI * 2 / 11 + random() * 0.2;
+        let px = x + Math.cos(angle) * (holeRadius + 0.025);
+        let py = y + Math.sin(angle) * (holeRadius + 0.025);
+        for (let j = 1; j <= 4; j++) {
+          const radius = THREE.MathUtils.lerp(holeRadius + 0.025, reach, j / 4);
+          const nextAngle = angle + (random() - 0.5) * 0.16;
+          const nx = x + Math.cos(nextAngle) * radius;
+          const ny = y + Math.sin(nextAngle) * radius;
+          if (Math.hypot(nx, ny) < 1.29 && Math.hypot(px, py) < 1.29) positions.push(px, py, 0.003, nx, ny, 0.003);
+          px = nx;
+          py = ny;
+        }
+      }
+      decals.add(new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(positions, 3)), crackMaterial));
+      const count = Math.min(96, state.target === 'breached' ? 32 + Math.round(state.severity * 60) : 18);
+      for (let i = 0; i < count; i++) {
+        const patch = removed.length ? removed[Math.floor(random() * removed.length)] : patches[Math.floor(random() * patches.length)];
+        const theta = random() * Math.PI * 2;
+        const spread = state.target === 'breached' ? 0.3 + random() * 3.8 : 0.5;
+        const position = removed.length ? new THREE.Vector3(patch.x, patch.y, -0.015) : new THREE.Vector3(x + Math.cos(theta) * 0.07, y + Math.sin(theta) * 0.07, 0.02);
+        splinters.push({
+          position,
+          velocity: new THREE.Vector3(Math.cos(theta) * spread, Math.sin(theta) * spread + random() * 1.8, state.target === 'breached' ? -(2 + random() * (5 + state.severity * 12)) : 0.4 + random()),
+          rotation: new THREE.Euler(random() * 6, random() * 6, random() * 6),
+          spin: new THREE.Vector3((random() - 0.5) * 18, (random() - 0.5) * 18, (random() - 0.5) * 18),
+          scale: new THREE.Vector3(0.018 + random() * 0.065, 0.008 + random() * 0.012, 0.065 + random() * (state.target === 'breached' ? 0.23 : 0.06)),
+          age: 0,
+        });
+        splinterMesh.setColorAt(i, i % 3 === 0 ? patch.paint : i % 2 ? woodColor : darkWoodColor);
+      }
+      splinterMesh.count = count;
+      if (splinterMesh.instanceColor) splinterMesh.instanceColor.needsUpdate = true;
+    }
+    update(0);
+  }
+
+  function update(dtSeconds: number) {
+    const dt = THREE.MathUtils.clamp(dtSeconds, 0, 0.05);
+    damageElapsed += dt;
+    if (movingPatches.length) {
+      const positions = board.geometry.getAttribute('position');
+      const normals = board.geometry.getAttribute('normal');
+      const damping = Math.exp(-damageElapsed * 2.5);
+      for (const patch of movingPatches) {
+        const swing = patch.angle * (1 - damping * Math.cos(damageElapsed * 14 + patch.phase) * 0.45);
+        rotation.setFromAxisAngle(patch.axis, swing);
+        for (let i = patch.offset; i < patch.offset + patch.length; i += 3) {
+          vertex.set((originalPositions[i] - patch.x) * patch.shrink, (originalPositions[i + 1] - patch.y) * patch.shrink, originalPositions[i + 2]);
+          vertex.applyQuaternion(rotation);
+          positions.setXYZ(i / 3, vertex.x + patch.x, vertex.y + patch.y, vertex.z + patch.dent);
+          vertex.set(originalNormals[i], originalNormals[i + 1], originalNormals[i + 2]).applyQuaternion(rotation);
+          normals.setXYZ(i / 3, vertex.x, vertex.y, vertex.z);
+        }
+      }
+      positions.needsUpdate = true;
+      normals.needsUpdate = true;
+      // The residual bend remains in the mesh after the short impact vibration.
+      if (damageElapsed > 2.5) movingPatches.length = 0;
+    }
+    for (let i = 0; i < splinters.length; i++) {
+      const splinter = splinters[i];
+      splinter.age += dt;
+      splinter.velocity.y -= 9.80665 * dt;
+      splinter.position.addScaledVector(splinter.velocity, dt);
+      splinter.rotation.x += splinter.spin.x * dt;
+      splinter.rotation.y += splinter.spin.y * dt;
+      splinter.rotation.z += splinter.spin.z * dt;
+      if (splinter.position.y < -1.58) {
+        splinter.position.y = -1.58;
+        splinter.velocity.y = Math.abs(splinter.velocity.y) * 0.13;
+        splinter.velocity.x *= 0.8;
+        splinter.velocity.z *= 0.8;
+        splinter.spin.multiplyScalar(0.7);
+      }
+      instanceDummy.position.copy(splinter.position);
+      instanceDummy.rotation.copy(splinter.rotation);
+      instanceDummy.scale.copy(splinter.scale).multiplyScalar(THREE.MathUtils.clamp((6.5 - splinter.age) / 0.7, 0, 1));
+      instanceDummy.updateMatrix();
+      splinterMesh.setMatrixAt(i, instanceDummy.matrix);
+    }
+    if (splinters.length) splinterMesh.instanceMatrix.needsUpdate = true;
+    if (splinters.length && splinters[0].age > 6.5) { splinters.length = 0; splinterMesh.count = 0; }
+  }
+
+  rebuild();
+  return { group, setDamage, reset, update, dispose: () => { clearDecals(); dentMaterial.dispose(); crackMaterial.dispose(); } };
 }
 
 /** All scene objects are render adapters. Trajectory and collisions live in simulation/. */
@@ -170,26 +443,18 @@ export function createWorld(container: HTMLElement): WorldView {
   const targetGroup = new THREE.Group();
   targetGroup.name = 'target';
   targetGroup.position.set(0, 1.6, -12);
-  const back = object(new THREE.CylinderGeometry(1.355, 1.355, 0.11, 64), mats.wood);
-  back.rotation.x = Math.PI / 2;
-  back.position.z = -0.065;
-  targetGroup.add(back);
-  const faceGroup = new THREE.Group();
-  const ringColors = [mats.cream, mats.sage, mats.cream, mats.orange, mats.cream, mats.orange];
-  const ringSizes = [1.3, 1.09, 0.85, 0.61, 0.38, 0.165];
-  ringSizes.forEach((radius, index) => {
-    const disk = object(new THREE.CircleGeometry(radius, 64), ringColors[index], false);
-    disk.position.z = 0.0004 * index;
-    faceGroup.add(disk);
-  });
+  const plywood = createPlywoodBoard();
+  targetGroup.add(plywood.group);
+  const rim = object(new THREE.TorusGeometry(1.325, 0.025, 6, 80), mats.wood);
+  rim.position.z = -0.012;
+  targetGroup.add(rim);
   for (let i = 0; i < 4; i++) {
     const angle = Math.PI / 4 + i * Math.PI / 2;
     const bolt = object(new THREE.SphereGeometry(0.024, 8, 6), mats.ink, false);
     bolt.scale.z = 0.2;
     bolt.position.set(Math.cos(angle) * 1.255, Math.sin(angle) * 1.255, 0.007);
-    faceGroup.add(bolt);
+    targetGroup.add(bolt);
   }
-  targetGroup.add(faceGroup);
   scene.add(targetGroup);
 
   for (const x of [-0.79, 0.79]) {
@@ -208,10 +473,6 @@ export function createWorld(container: HTMLElement): WorldView {
   const rangePlate = object(new THREE.PlaneGeometry(1.15, 0.43), new THREE.MeshStandardMaterial({ map: labelTexture('12 m'), roughness: 0.9 }));
   rangePlate.position.set(0, 0.43, -11.98);
   scene.add(rangePlate);
-
-  const damage = new THREE.Group();
-  damage.name = 'target-damage';
-  targetGroup.add(damage);
 
   // A low fence, orchard and distant hills establish scale without cluttering the throwing lane.
   const fenceMat = material('#c7b48d');
@@ -297,57 +558,22 @@ export function createWorld(container: HTMLElement): WorldView {
     scene.add(group);
   }
 
+  let initialCamera = true;
   const resize = () => {
     const width = Math.max(container.clientWidth, 1);
     const height = Math.max(container.clientHeight, 1);
     const portrait = width / height < 0.9;
     camera.aspect = width / height;
-    camera.fov = portrait ? 53 : 43;
-    camera.position.set(portrait ? 3.8 : 5.4, portrait ? 4.5 : 4.0, portrait ? 9.2 : 6.6);
-    camera.lookAt(portrait ? -0.1 : 0.1, portrait ? 1.15 : 1.3, -5.2);
+    if (initialCamera) {
+      camera.fov = portrait ? 53 : 43;
+      camera.position.set(portrait ? 3.8 : 5.4, portrait ? 4.5 : 4.0, portrait ? 9.2 : 6.6);
+      camera.lookAt(portrait ? -0.1 : 0.1, portrait ? 1.15 : 1.3, -5.2);
+      initialCamera = false;
+    }
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
   };
   resize();
-
-  function clearDamage(): void {
-    for (const child of [...damage.children]) {
-      damage.remove(child);
-      if (child instanceof THREE.Mesh || child instanceof THREE.Line) child.geometry.dispose();
-    }
-  }
-
-  const damageMat = new THREE.MeshStandardMaterial({ color: '#765137', roughness: 1, polygonOffset: true, polygonOffsetFactor: -2 });
-  const crackMat = new THREE.LineBasicMaterial({ color: '#775b41', transparent: true, opacity: 0.87 });
-  function setTargetDamage(energy: number, hitX = 0, hitY = 1.6): void {
-    clearDamage();
-    const x = THREE.MathUtils.clamp(hitX, -1.25, 1.25);
-    const y = THREE.MathUtils.clamp(hitY - 1.6, -1.25, 1.25);
-    const radius = Math.min(0.18, 0.035 + Math.log10(Math.max(1, energy)) * 0.024);
-    const dent = object(new THREE.CircleGeometry(radius, 12), damageMat, false);
-    dent.position.set(x, y, 0.009);
-    damage.add(dent);
-    if (energy > 250) {
-      const crackRandom = seeded(Math.round(energy));
-      const positions: number[] = [];
-      const count = Math.min(11, 3 + Math.floor(Math.log10(energy)));
-      const reach = Math.min(0.92, Math.log10(energy) * 0.12);
-      for (let i = 0; i < count; i++) {
-        const a = i * Math.PI * 2 / count + crackRandom() * 0.3;
-        let px = x;
-        let py = y;
-        for (let j = 1; j <= 4; j++) {
-          const nx = x + Math.cos(a + (crackRandom() - 0.5) * 0.3) * reach * j / 4;
-          const ny = y + Math.sin(a + (crackRandom() - 0.5) * 0.3) * reach * j / 4;
-          if (Math.hypot(nx, ny) < 1.28) positions.push(px, py, 0.011, nx, ny, 0.011);
-          px = nx;
-          py = ny;
-        }
-      }
-      const lines = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(positions, 3)), crackMat);
-      damage.add(lines);
-    }
-  }
 
   let contextLost = false;
   const onLost = (event: Event) => {
@@ -368,13 +594,15 @@ export function createWorld(container: HTMLElement): WorldView {
     scene,
     camera,
     targetGroup,
+    update: plywood.update,
     render: () => { if (!contextLost) renderer.render(scene, camera); },
     resize,
-    setTargetDamage,
-    resetTarget: clearDamage,
+    setTargetDamage: plywood.setDamage,
+    resetTarget: plywood.reset,
     dispose: () => {
       renderer.domElement.removeEventListener('webglcontextlost', onLost);
       renderer.domElement.removeEventListener('webglcontextrestored', onRestored);
+      plywood.dispose();
       const geometries = new Set<THREE.BufferGeometry>();
       const usedMaterials = new Set<THREE.Material>();
       const textures = new Set<THREE.Texture>();

@@ -50,3 +50,25 @@ footer{font-size:11px;letter-spacing:.6px}
   .result-metrics{gap:8px}
   .result-metrics strong{font-size:21px}
 }
+
+/* The camera now frames the vegetable; leave the centre clear for following. */
+.scene-wash{opacity:.12}
+.hero{top:24px}
+.hero .eyebrow,.hero p{display:none}
+.hero h1{font-size:27px;line-height:1.3;letter-spacing:-1px;margin:0}
+.hero h1 br{display:none}
+.in-flight .hero,.has-result .hero{opacity:0;visibility:hidden}
+.speed-readout{top:23px}
+.speed-number>span:first-child{font-size:67px;letter-spacing:-4px}
+.speed-unit{font-size:19px}
+.flight-tag{font-size:15px}
+.effect-note{float:none;display:block;margin:14px 0 0}
+@media(max-width:700px){
+  .hero{top:22px}
+  .hero h1{font-size:21px;letter-spacing:-.8px}
+  .speed-readout,.has-result .speed-readout{top:20px}
+  .speed-number>span:first-child,.has-result .speed-number>span:first-child{font-size:47px;letter-spacing:-2px}
+  .speed-unit{font-size:15px}
+  .flight-tag{font-size:13px;bottom:308px}
+  .effect-note{margin:0;font-size:12px}
+}
