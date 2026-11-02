@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createAftermath, stepAftermath, type AftermathCloud } from '../simulation/aftermath';
 import type { ImpactResponse } from '../simulation/impact';
+import type { CityExperiment } from '../simulation/city';
 
 export interface ImpactOptions {
   position: THREE.Vector3;
@@ -53,7 +54,7 @@ type FragmentStyle = {
 };
 
 /** Rendering adapter for the mass-accounted, persistent aftermath model. */
-export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
+export async function createEffects(scene: THREE.Scene, city?: CityExperiment): Promise<ThrowEffects> {
   const root = new THREE.Group();
   root.name = 'throw-effects';
   scene.add(root);
@@ -299,17 +300,18 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
       const adhering = particle.kind === 'deposit' && depositsOnTarget;
       instanceTransform.position.set(particle.position.x, particle.position.y, particle.position.z);
       instanceTransform.scale.copy(style.scale).multiplyScalar(particle.radiusM);
-      if (particle.landed && !adhering) {
+      if (particle.landed && !adhering && !particle.surfaceId) {
         // Flatten wet pulp on the ground while retaining visible resting bits.
         instanceTransform.scale.y *= 0.45;
         instanceTransform.position.y = instanceTransform.scale.y + 0.001;
         instanceTransform.rotation.set(0, style.rotation.y, 0);
       } else {
         if (adhering) instanceTransform.position.z = -11.994 + instanceTransform.scale.z;
+        const spinTime = particle.landed ? 0 : cloud!.elapsedSeconds;
         instanceTransform.rotation.set(
-        style.rotation.x + style.spin.x * cloud!.elapsedSeconds,
-        style.rotation.y + style.spin.y * cloud!.elapsedSeconds,
-        style.rotation.z + style.spin.z * cloud!.elapsedSeconds,
+        style.rotation.x + style.spin.x * spinTime,
+        style.rotation.y + style.spin.y * spinTime,
+        style.rotation.z + style.spin.z * spinTime,
         );
       }
       instanceTransform.updateMatrix();
@@ -321,7 +323,7 @@ export async function createEffects(scene: THREE.Scene): Promise<ThrowEffects> {
   function update(realDelta: number) {
     const dt = Number.isFinite(realDelta) ? Math.max(0, realDelta) : 0;
     if (cloud) {
-      stepAftermath(cloud, dt);
+      stepAftermath(cloud, dt, city);
       renderFragments();
     }
     for (let i = mist.length - 1; i >= 0; i--) {

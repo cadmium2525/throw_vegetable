@@ -6,6 +6,9 @@ import { createChaseCamera } from './render/chase-camera';
 import { getImpactResponse } from './simulation/impact';
 import { playbackRate, flightTimeAt } from './simulation/playback';
 import { VEGETABLES, PHYSICS, simulateThrow, sampleTrajectory, type ThrowResult } from './simulation/physics';
+import { CityExperiment, CITY_OBSERVERS } from './simulation/city';
+import { flightEnergyBudget, machAngle } from './simulation/waves';
+import { createCityView } from './render/city';
 import './style.css';
 
 const icons: Record<string, string> = {
@@ -25,22 +28,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <nav aria-label="メニュー"><button class="text-button" id="model-button">物理モデル <span>↗</span></button><button class="sound-button" id="sound-button" aria-label="音をオンにする" aria-pressed="false">音 OFF</button></nav>
   </header>
   <main>
-    <div id="scene" role="img" aria-label="12メートル先の的に野菜を投げる3D実験場"></div>
+    <div id="scene" role="img" aria-label="街中で野菜と衝撃波を観察する3D実験場"></div>
     <div class="scene-wash" aria-hidden="true"></div>
-    <section class="hero" aria-label="ゲームタイトル"><div class="eyebrow"><i></i> PLAY WITH YOUR FOOD.</div><h1>野菜、<br>限界速度。</h1><p>その一投は、音速を超える。</p></section>
+    <section class="hero" aria-label="ゲームタイトル"><div class="eyebrow"><i></i> PLAY WITH YOUR FOOD.</div><h1>野菜 × 街。</h1><p>その一投は、音速を超える。</p></section>
     <section class="speed-readout" aria-label="投げる速度"><div class="eyebrow" id="speed-label">投げる速度</div><div class="speed-number"><span id="speed">0</span><span class="speed-unit">km/h</span></div><div class="mach-line"><span id="mach">MACH 0.00</span><span class="supersonic" id="supersonic" hidden>超音速</span></div></section>
-    <div class="range-info"><span class="live-dot"></span>15°C<span class="info-divider">/</span>無風<span class="info-divider">/</span>的まで <strong>12 m</strong></div>
-    <div class="flight-tag" id="flight-tag" hidden></div>
-    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ スローで見る</button><span class="effect-note">12mm合板 · 破壊は推定演出</span></section>
+    <div class="range-info"><span class="live-dot"></span>市街地 · 15°C<span class="info-divider">/</span>無風<span class="info-divider">/</span>的まで <strong>12 m</strong></div>
+    <div class="view-tools"><button id="view-button" aria-pressed="false">街を俯瞰</button><button id="waves-button" aria-pressed="true">波 ON</button></div><div class="wave-key" id="wave-key">青：超音速の波 ／ 橙：衝突音<br>伝播の模式表示 · 圧力は未計算</div><div class="flight-tag" id="flight-tag" hidden></div>
+    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ スローで見る</button><button class="replay-button" id="city-report-button">街への影響 ↗</button><span id="city-summary" class="effect-note">街を観測中</span></section>
     <div class="scene-message" id="scene-message" role="status">実験場を準備中…</div>
     <div class="control-dock">
       <section class="vegetable-panel" aria-labelledby="vegetable-heading"><div class="panel-heading"><h2 id="vegetable-heading"><span class="step-number">01</span> 野菜を選ぶ</h2><span class="mass" id="mass">150 g</span></div><div class="vegetable-list" id="vegetable-list">${VEGETABLES.map((v, i) => `<button class="vegetable-button${i === 0 ? ' selected' : ''}" data-vegetable="${v.id}" aria-pressed="${i === 0}" aria-label="${v.name}を選ぶ">${vegetableIcon(v.id)}<span>${v.name}</span></button>`).join('')}</div></section>
       <section class="throw-panel" aria-labelledby="throw-heading"><div class="panel-heading"><h2 id="throw-heading"><span class="step-number">02</span> タイミングよく投げる</h2><button class="settings-button" id="settings-button" aria-label="実験設定を開く"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>設定</span></button></div><div class="throw-row"><div class="gauge-wrap"><div class="gauge" id="gauge" role="meter" aria-label="速度ゲージ" aria-valuemin="0" aria-valuemax="2000" aria-valuenow="0"><div class="gauge-fill" id="gauge-fill"></div><div class="sonic-mark" title="音速"></div><div class="gauge-ticks"></div><div class="gauge-needle" id="gauge-needle"></div></div><div class="gauge-labels"><span>0</span><span class="sonic-label">音速</span><span>2000 <small>km/h</small></span></div></div><button class="throw-button" id="throw-button" disabled><span>準備中</span>${arrow}</button></div><div class="control-hint"><span id="control-hint">タップで速度を決定</span><span class="keyboard-hint"><kbd>SPACE</kbd> でも投げる</span></div></section>
     </div>
   </main>
-  <footer><span>0 → 2000 km/h <span class="footer-dot">·</span> VEGETABLE VELOCITY LAB</span><span>重力・空気抵抗を計算 <span class="footer-dot">·</span> 剛体の近似モデル</span></footer>
+  <footer><span>0 → 2000 km/h <span class="footer-dot">·</span> VEGETABLE VELOCITY LAB</span><span>重力・空気抵抗を計算 <span class="footer-dot">·</span> 破壊・飛行中の形状は仮定</span></footer>
   <dialog id="settings-dialog"><div class="dialog-heading"><h2>実験設定</h2><button class="close-button" data-close="settings-dialog" aria-label="設定を閉じる">×</button></div><form id="experiment-form"><label class="input-label" for="exact-speed">速度を指定</label><div class="number-input"><input type="number" id="exact-speed" min="0" max="2000" step="1" value="2000" required inputmode="numeric"><span>km/h</span></div><div class="presets">${[0, 100, 1000, 2000].map(v => `<button type="button" data-preset="${v}">${v}</button>`).join('')}</div><label class="input-label angle-label" for="angle">投げる角度 <output id="angle-output">2°</output></label><input type="range" id="angle" min="-3" max="5" step="1" value="2"><div class="range-labels"><span>−3°</span><span>5°</span></div><button type="submit" class="throw-button exact-throw"><span>この速度で投げる</span>${arrow}</button></form><p class="dialog-note">通常は実時間。スローは再生時のみ。<br>破壊は材質を仮定した演出です。</p></dialog>
-  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>飛行中は剛体の近似。衝突後は野菜の崩壊と12mm合板の破損をエネルギーから推定表示します。実測で検証された破壊予測ではありません。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a></dialog>
+  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>飛行中の変形・空中分裂は未計算。野菜が形を保って発射されたと仮定します。衝突後の破砕・12mm合板と窓の破損は未検証の近似です。</p><p>青い波は音速で広がる弱い擾乱の模式図。実際の弓形衝撃波・反射・回折・地面の影響・窓の圧力・建物の倒壊は未計算です。</p><p>窓は合わせガラスを想定し、破片を完全に捕捉する近似。破損後の貫通やガラス片は未計算です。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a><a class="source-link" href="https://www.grc.nasa.gov/www/k-12/BGP/mach.html" target="_blank" rel="noopener noreferrer">NASA · マッハ数と波 ↗</a></dialog>
+  <dialog id="city-dialog"><div class="dialog-heading"><h2>街への影響</h2><button class="close-button" data-close="city-dialog" aria-label="観測を閉じる">×</button></div><div id="city-report"></div><p class="dialog-note">波の到達 ≠ 破壊。圧力・倒壊は未計算。<br>窓の破損数は直撃による仮定結果です。</p></dialog>
 `;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -48,6 +52,14 @@ const sceneContainer = $('scene');
 const throwButton = $<HTMLButtonElement>('throw-button');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
 const modelDialog = $<HTMLDialogElement>('model-dialog');
+const cityDialog = $<HTMLDialogElement>('city-dialog');
+const cityExperiment = new CityExperiment();
+let cityView: ReturnType<typeof createCityView>;
+let overview = false;
+let wavesVisible = true;
+let experimentTime = 0;
+let waveHeard = false;
+let lastCityReport = '';
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let selectedId = 'tomato';
 let angleDeg = 2;
@@ -108,6 +120,10 @@ function ready() {
   result = null;
   damage = null;
   effects.clear();
+  cityExperiment.reset();
+  cityView.reset();
+  experimentTime = 0;
+  waveHeard = false;
   trailPoints.length = 0;
   world.resetTarget();
   makeProjectile();
@@ -157,7 +173,12 @@ function launch(speed: number, replay = false) {
   playbackSpeed = playbackRate(result.impact.time, replay);
   lastFrame = performance.now();
   effects.clear();
+  cityExperiment.reset();
+  cityView.reset();
+  experimentTime = 0;
+  waveHeard = false;
   world.resetTarget();
+  cityView.start(result);
   trailPoints.length = 0;
   makeProjectile();
   chaseCamera.follow(projectile.position, new THREE.Vector3(0, 0, -1), projectileRadius);
@@ -225,7 +246,8 @@ function frame(now: number) {
   lastFrame = now;
   if (!hidden) {
     let aftermathDelta = delta;
-    if (state === 'ready' && !settingsDialog.open && !modelDialog.open) {
+    if (state === 'flying' || state === 'impact' || state === 'result') experimentTime += delta * playbackSpeed;
+    if (state === 'ready' && !settingsDialog.open && !modelDialog.open && !cityDialog.open) {
       meterClock += delta * 0.57;
       gaugeSpeed = Math.round(2000 * (1 - Math.abs(meterClock % 2 - 1)));
       setSpeed(gaugeSpeed);
@@ -262,21 +284,81 @@ function frame(now: number) {
       const remnants = effects.getFollowTarget();
       if (remnants) {
         chaseCamera.followAftermath(remnants.position, remnants.velocity, remnants.radius, remnants.landed);
-        const hint = remnants.landed ? '破片が的の奥に着地' : '的の奥へ進む破片を追跡中';
+        const hint = remnants.landed ? '破片が静止 · 街を俯瞰して確認' : '的の奥へ進む破片を追跡中';
         if ($('control-hint').textContent !== hint) $('control-hint').textContent = hint;
       }
     }
     chaseCamera.update(Math.min(delta, 0.05));
+    cityView.update(experimentTime);
+    const arrival = cityView.arrivals[0];
+    if (!waveHeard && arrival != null && experimentTime >= arrival) {
+      waveHeard = true;
+      waveSound();
+    }
+    if (result && state === 'result') updateCityReport();
+    if (overview) {
+      world.camera.far = 300;
+      world.camera.updateProjectionMatrix();
+      const portrait = world.camera.aspect < 0.9;
+      world.camera.position.set(portrait ? 29 : 23, portrait ? 40 : 28, portrait ? 30 : 19);
+      world.camera.lookAt(0, 0, -18);
+    }
     world.render();
   }
   animationId = requestAnimationFrame(frame);
 }
 
+
+function updateCityReport() {
+  if (!result) return;
+  const summary = cityExperiment.summary;
+  const supersonic = result.launchMach > 1;
+  const summaryText = `窓の破損 ${summary.brokenGlass}枚（直撃・仮定） · 波圧は未計算`;
+  if ($('city-summary').textContent !== summaryText) $('city-summary').textContent = summaryText;
+  if (!cityDialog.open) return;
+  const reportKey = `${shotNumber}-${isReplay}-${summary.contacted}-${summary.brokenGlass}`;
+  if (lastCityReport === reportKey) return;
+  lastCityReport = reportKey;
+  const budget = flightEnergyBudget(result);
+  const angle = machAngle(result.launchMach);
+  $('city-report').innerHTML = `<dl class="city-metrics"><div><dt>超音速の波</dt><dd>${supersonic ? `あり · M ${result.launchMach.toFixed(2)}` : 'なし'}</dd></div><div><dt>初速のマッハ角（模式）</dt><dd>${angle === null ? '—' : `${number(angle * 180 / Math.PI, 1)}°`}</dd></div><div><dt>初期エネルギー</dt><dd>${number(budget.initialJ / 1000, 2)} kJ</dd></div><div><dt>飛行中の抵抗仕事</dt><dd>${number(budget.dragWorkJ / 1000, 2)} kJ</dd></div><div><dt>直撃した面</dt><dd>${summary.contacted}面</dd></div><div><dt>窓の破損（仮定）</dt><dd>${summary.brokenGlass}枚</dd></div></dl><h3>波の初回到達（近似）</h3><dl class="city-metrics">${CITY_OBSERVERS.map((o, i) => `<div><dt>${o.name}</dt><dd>${cityView.arrivals[i] == null ? '—' : `${number(cityView.arrivals[i]! * 1000, 1)} ms`}</dd></div>`).join('')}</dl><p class="dialog-note">抵抗仕事の全量が衝撃波になるわけではありません。飛行中の空中分裂は未計算。</p>`;
+}
+/** Quiet illustrative playback at the pavement observer, not a calibrated SPL. */
+function waveSound() {
+  if (!sound) return;
+  try {
+    audio ??= new AudioContext();
+    void audio.resume();
+    const length = Math.floor(audio.sampleRate * 0.045);
+    const buffer = audio.createBuffer(1, length, audio.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (length * 0.14));
+    const source = audio.createBufferSource(); source.buffer = buffer;
+    const gain = audio.createGain(); gain.gain.value = 0.065;
+    source.connect(gain).connect(audio.destination); source.start();
+    source.onended = () => { source.disconnect(); gain.disconnect(); };
+  } catch { /* Audio is optional and does not drive physics. */ }
+}
+$('view-button').addEventListener('click', () => {
+  overview = !overview;
+  $('view-button').setAttribute('aria-pressed', String(overview));
+  $('view-button').textContent = overview ? '野菜を追尾' : '街を俯瞰';
+  if (!overview && result && state === 'result') chaseCamera.impact(new THREE.Vector3(result.impact.contactPoint.x, result.impact.contactPoint.y, result.impact.contactPoint.z), result.impact.kind === 'target', damage?.severity ?? 0);
+});
+$('waves-button').addEventListener('click', () => {
+  wavesVisible = !wavesVisible;
+  cityView?.setWaves(wavesVisible);
+  $('waves-button').setAttribute('aria-pressed', String(wavesVisible));
+  $('waves-button').textContent = `波 ${wavesVisible ? 'ON' : 'OFF'}`;
+  $('wave-key').hidden = !wavesVisible;
+});
+$('city-report-button').addEventListener('click', () => { showDialog(cityDialog); updateCityReport(); });
+
 function showDialog(dialog: HTMLDialogElement) { dialog.showModal(); }
 $('settings-button').addEventListener('click', () => showDialog(settingsDialog));
 $('model-button').addEventListener('click', () => showDialog(modelDialog));
 document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', () => $<HTMLDialogElement>(button.dataset.close!).close()));
-[settingsDialog, modelDialog].forEach(dialog => dialog.addEventListener('click', event => {
+[settingsDialog, modelDialog, cityDialog].forEach(dialog => dialog.addEventListener('click', event => {
   if (event.target === dialog) {
     const r = dialog.getBoundingClientRect();
     if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close();
@@ -305,7 +387,7 @@ $('sound-button').addEventListener('click', () => {
 });
 window.addEventListener('keydown', event => {
   const target = event.target as HTMLElement;
-  if (event.code === 'Space' && !event.repeat && !settingsDialog.open && !modelDialog.open && !['INPUT', 'BUTTON', 'A', 'TEXTAREA'].includes(target.tagName)) { event.preventDefault(); throwButton.click(); }
+  if (event.code === 'Space' && !event.repeat && !settingsDialog.open && !modelDialog.open && !cityDialog.open && !['INPUT', 'BUTTON', 'A', 'TEXTAREA'].includes(target.tagName)) { event.preventDefault(); throwButton.click(); }
 });
 document.addEventListener('visibilitychange', () => { hidden = document.hidden; lastFrame = performance.now(); });
 sceneContainer.addEventListener('rendercontextlost', () => { hidden = true; $('scene-message').hidden = false; $('scene-message').textContent = '3D表示を復元中…'; });
@@ -316,7 +398,8 @@ async function boot() {
     world = createWorld(sceneContainer);
     chaseCamera = createChaseCamera(world.camera, reducedMotion);
     world.render();
-    effects = await createEffects(world.scene);
+    cityView = createCityView(world.scene, cityExperiment);
+    effects = await createEffects(world.scene, cityExperiment);
     ready();
     $('scene-message').hidden = true;
     new ResizeObserver(() => world.resize()).observe(sceneContainer);
@@ -329,4 +412,4 @@ async function boot() {
   }
 }
 void boot();
-if (import.meta.hot) import.meta.hot.dispose(() => { cancelAnimationFrame(animationId); disposeProjectile(); effects?.dispose(); world?.dispose(); void audio?.close(); });
+if (import.meta.hot) import.meta.hot.dispose(() => { cancelAnimationFrame(animationId); disposeProjectile(); effects?.dispose(); cityView?.dispose(); world?.dispose(); void audio?.close(); });

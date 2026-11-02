@@ -1,5 +1,6 @@
 import { PHYSICS, type Vec3 } from './physics.ts';
 import { IMPACT_MODEL, type ImpactResponse } from './impact.ts';
+import { firstCityHit, type CityExperiment } from './city.ts';
 
 /** Explicit visual assumptions, not a validated penetration/fragmentation law. */
 export const AFTERMATH_MODEL = Object.freeze({
@@ -39,6 +40,8 @@ export interface AftermathParticle {
   kind: 'forward' | 'splash' | 'deposit';
   /** At rest on the ground, or adhering to the target for a deposit. */
   landed: boolean;
+  /** Wet material caught on a city surface; retain its actual contact height. */
+  surfaceId?: string;
 }
 
 export interface AftermathCloud {
@@ -231,7 +234,7 @@ export function createAftermath(input: AftermathInput): AftermathCloud {
   };
 }
 
-function integrateParticle(particle: AftermathParticle, dt: number) {
+function integrateParticle(particle: AftermathParticle, dt: number, city?: CityExperiment) {
   if (particle.landed) return;
   const previousPosition = { ...particle.position };
   const previousVelocity = { ...particle.velocity };
@@ -249,6 +252,19 @@ function integrateParticle(particle: AftermathParticle, dt: number) {
   particle.position.x += (previousVelocity.x + particle.velocity.x) * dt / 2;
   particle.position.y += (previousVelocity.y + particle.velocity.y) * dt / 2;
   particle.position.z += (previousVelocity.z + particle.velocity.z) * dt / 2;
+  if (city) {
+    const hit = firstCityHit(previousPosition, particle.position, particle.radiusM, city.surfaces);
+    const floorFraction = particle.position.y <= particle.radiusM
+      ? clamp((previousPosition.y - particle.radiusM) / (previousPosition.y - particle.position.y || 1), 0, 1) : 1;
+    if (hit && hit.fraction <= floorFraction) {
+      city.record(hit, particle.massKg, particle.velocity);
+      particle.position = hit.position;
+      particle.velocity = { x: 0, y: 0, z: 0 };
+      particle.landed = true;
+      particle.surfaceId = hit.surface.id;
+      return;
+    }
+  }
   if (particle.position.y <= particle.radiusM) {
     const fraction = clamp((previousPosition.y - particle.radiusM) / (previousPosition.y - particle.position.y || 1), 0, 1);
     particle.position.x = previousPosition.x + (particle.position.x - previousPosition.x) * fraction;
@@ -260,12 +276,12 @@ function integrateParticle(particle: AftermathParticle, dt: number) {
 }
 
 /** Mutates in place. Nothing expires: landed particles stay until cleared. */
-export function stepAftermath(cloud: AftermathCloud, dt: number): void {
+export function stepAftermath(cloud: AftermathCloud, dt: number, city?: CityExperiment): void {
   if (!Number.isFinite(dt) || dt < 0) throw new RangeError('Aftermath time step must be finite and nonnegative.');
   cloud.accumulatorSeconds += dt;
   const step = AFTERMATH_MODEL.stepSeconds;
   while (cloud.accumulatorSeconds + 1e-12 >= step) {
-    for (const particle of cloud.particles) integrateParticle(particle, step);
+    for (const particle of cloud.particles) integrateParticle(particle, step, city);
     cloud.accumulatorSeconds = Math.max(0, cloud.accumulatorSeconds - step);
     cloud.elapsedSeconds += step;
   }

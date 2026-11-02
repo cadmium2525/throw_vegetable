@@ -21,7 +21,7 @@ export interface TargetDamageResponse {
 
 const palette = {
   sky: '#dbe4d6',
-  grass: '#a9b18a',
+  grass: '#a9b5ac',
   grassDark: '#8c9a73',
   ground: '#d8c5a2',
   lane: '#d4b790',
@@ -341,8 +341,8 @@ export function createPlywoodBoard() {
 export function createWorld(container: HTMLElement): WorldView {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(palette.sky);
-  scene.fog = new THREE.Fog(palette.sky, 24, 91);
-  const camera = new THREE.PerspectiveCamera(43, 1, 0.05, 150);
+  scene.fog = new THREE.Fog(palette.sky, 65, 190);
+  const camera = new THREE.PerspectiveCamera(43, 1, 0.05, 300);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   renderer.shadowMap.enabled = true;
@@ -350,7 +350,7 @@ export function createWorld(container: HTMLElement): WorldView {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
-  renderer.domElement.setAttribute('aria-label', '野菜を投げる実験場。的まで12メートル。');
+  renderer.domElement.setAttribute('aria-label', '街中の野菜投擲実験。的まで12メートル、奥に停留所。');
   renderer.domElement.setAttribute('role', 'img');
   container.appendChild(renderer.domElement);
 
@@ -389,43 +389,6 @@ export function createWorld(container: HTMLElement): WorldView {
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.025;
   scene.add(ground);
-
-  const clearing = object(new THREE.CircleGeometry(15.5, 64), mats.ground, false);
-  clearing.rotation.x = -Math.PI / 2;
-  clearing.position.set(0, -0.016, -5.5);
-  clearing.scale.set(0.64, 1, 1);
-  scene.add(clearing);
-
-  const lane = object(new THREE.PlaneGeometry(4.5, 15.6), mats.lane, false);
-  lane.rotation.x = -Math.PI / 2;
-  lane.position.set(0, 0.001, -5.8);
-  scene.add(lane);
-
-  const stripGeometry = new THREE.PlaneGeometry(0.045, 14.5);
-  for (const x of [-2.12, 2.12]) {
-    const strip = object(stripGeometry, mats.cream, false);
-    strip.rotation.x = -Math.PI / 2;
-    strip.position.set(x, 0.007, -5.4);
-    scene.add(strip);
-  }
-  for (let z = 0; z >= -12; z--) {
-    for (const x of [-2.01, 2.01]) {
-      const mark = object(new THREE.PlaneGeometry(z % 5 === 0 ? 0.3 : 0.13, 0.035), mats.cream, false);
-      mark.rotation.x = -Math.PI / 2;
-      mark.position.set(x, 0.009, z);
-      scene.add(mark);
-    }
-  }
-  for (const z of [-5, -10]) {
-    const cross = object(new THREE.PlaneGeometry(3.85, 0.023), mats.cream, false);
-    cross.rotation.x = -Math.PI / 2;
-    cross.position.set(0, 0.008, z);
-    scene.add(cross);
-    const text = object(new THREE.PlaneGeometry(0.6, 0.22), new THREE.MeshBasicMaterial({ map: labelTexture(`${Math.abs(z)} m`), transparent: false }), false);
-    text.rotation.x = -Math.PI / 2;
-    text.position.set(2.55, 0.014, z + 0.06);
-    scene.add(text);
-  }
 
   const launch = object(new THREE.BoxGeometry(4.2, 0.08, 1.6), mats.concrete);
   launch.position.set(0, -0.04, 0.7);
@@ -474,74 +437,7 @@ export function createWorld(container: HTMLElement): WorldView {
   rangePlate.position.set(0, 0.43, -11.98);
   scene.add(rangePlate);
 
-  // A low fence, orchard and distant hills establish scale without cluttering the throwing lane.
-  const fenceMat = material('#c7b48d');
-  for (let x = -20; x <= 20; x += 2.5) {
-    const post = object(new THREE.BoxGeometry(0.095, 0.8, 0.095), fenceMat);
-    post.position.set(x, 0.4, -19);
-    scene.add(post);
-  }
-  for (const y of [0.29, 0.62]) {
-    const rail = object(new THREE.BoxGeometry(41, 0.07, 0.055), fenceMat);
-    rail.position.set(0, y, -19.03);
-    scene.add(rail);
-  }
-
   const random = seeded(2000);
-  const hillGeo = new THREE.SphereGeometry(1, 24, 12);
-  const hills = ['#a5b493', '#aab697', '#b7bea0', '#b9c3aa', '#bbc7b2'];
-  for (let i = 0; i < 15; i++) {
-    const hill = object(hillGeo, material(hills[i % hills.length]), false);
-    hill.position.set(-70 + i * 10 + random() * 5, -0.8, -43 - random() * 27);
-    hill.scale.set(10 + random() * 12, 3 + random() * 6, 8 + random() * 7);
-    scene.add(hill);
-  }
-
-  const treeTrunkGeometry = new THREE.CylinderGeometry(0.1, 0.15, 1.5, 6);
-  const treeCrownGeometry = new THREE.IcosahedronGeometry(1, 1);
-  const treeMat = material('#84946b');
-  const treeLightMat = material('#97a478');
-  for (let i = 0; i < 18; i++) {
-    const x = (i % 2 ? -1 : 1) * (8 + random() * 20);
-    const z = -6 - random() * 33;
-    const trunk = object(treeTrunkGeometry, mats.wood);
-    trunk.position.set(x, 0.75, z);
-    scene.add(trunk);
-    const crown = object(treeCrownGeometry, i % 3 ? treeMat : treeLightMat);
-    crown.position.set(x, 2.1, z);
-    crown.scale.set(1.1 + random() * 0.55, 1.5 + random() * 0.7, 1.05 + random() * 0.4);
-    scene.add(crown);
-  }
-
-  const grassGeometry = new THREE.ConeGeometry(0.07, 0.35, 3);
-  const grassInstances = new THREE.InstancedMesh(grassGeometry, mats.grassDark, 190);
-  const dummy = new THREE.Object3D();
-  for (let i = 0; i < 190; i++) {
-    const side = i % 2 ? -1 : 1;
-    dummy.position.set(side * (4.4 + random() * 15), 0.1, 5 - random() * 28);
-    dummy.rotation.set((random() - 0.5) * 0.3, random() * 6.28, (random() - 0.5) * 0.5);
-    dummy.scale.setScalar(0.5 + random() * 0.8);
-    dummy.updateMatrix();
-    grassInstances.setMatrixAt(i, dummy.matrix);
-  }
-  scene.add(grassInstances);
-
-  // A little barn is intentionally far from the line of fire.
-  const barn = new THREE.Group();
-  const barnBody = object(new THREE.BoxGeometry(3.9, 2.05, 3.1), material('#b77d61'));
-  barnBody.position.y = 1.025;
-  barn.add(barnBody);
-  const roofGeometry = new THREE.CylinderGeometry(2.42, 2.42, 3.45, 3, 1);
-  const roof = object(roofGeometry, material('#747c68'));
-  roof.rotation.set(Math.PI / 2, 0, Math.PI / 2);
-  roof.position.y = 2.38;
-  barn.add(roof);
-  const door = object(new THREE.PlaneGeometry(1.12, 1.52), material('#6c7461'));
-  door.position.set(0, 0.76, 1.558);
-  barn.add(door);
-  barn.position.set(15, 0, -30);
-  barn.rotation.y = -0.19;
-  scene.add(barn);
 
   // Soft cloud silhouettes; no image downloads or runtime external services.
   const cloudMat = new THREE.MeshBasicMaterial({ color: '#f3f0df', fog: true });
