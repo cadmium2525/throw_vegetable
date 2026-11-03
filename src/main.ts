@@ -4,7 +4,7 @@ import { createVegetable } from './render/vegetables';
 import { createEffects, type ThrowEffects } from './render/effects';
 import { createChaseCamera } from './render/chase-camera';
 import { getImpactResponse } from './simulation/impact';
-import { playbackRate, flightTimeAt } from './simulation/playback';
+import { playbackRate, flightTimeAt, contactTimescale, aftermathTimeAt } from './simulation/playback';
 import { VEGETABLES, PHYSICS, simulateThrow, sampleTrajectory, type ThrowResult } from './simulation/physics';
 import { CityExperiment, CITY_OBSERVERS } from './simulation/city';
 import { flightEnergyBudget, machAngle } from './simulation/waves';
@@ -38,16 +38,17 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <section class="speed-readout" aria-label="投げる速度"><div class="eyebrow" id="speed-label">投げる速度</div><div class="speed-number"><span id="speed">0</span><span class="speed-unit">km/h</span></div><div class="mach-line"><span id="mach">MACH 0.00</span><span class="supersonic" id="supersonic" hidden>超音速</span></div></section>
     <div class="range-info"><span class="live-dot"></span>市街地 · 15°C<span class="info-divider">/</span>無風<span class="info-divider">/</span>的まで <strong>12 m</strong></div>
     <div class="view-tools"><button id="view-button" aria-pressed="false">街を俯瞰</button><button id="waves-button" aria-pressed="true">波 ON</button></div><div class="wave-key" id="wave-key">青：超音速の波 ／ 橙：衝突音<br>青の圧力は未計算 · 橙は仮定で試算</div><div class="flight-tag" id="flight-tag" hidden></div>
-    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ スローで見る</button><button class="replay-button" id="city-report-button">観測結果 ↗</button><span id="city-summary" class="effect-note">街を観測中</span></section>
+    <section class="outcome" id="outcome" aria-live="polite" hidden><div class="eyebrow" id="result-eyebrow">EXPERIMENT 001</div><h2 id="result-title">命中。</h2><div class="result-metrics"><div><span>衝突速度</span><strong id="impact-speed"></strong></div><div><span>運動エネルギー</span><strong id="impact-energy"></strong></div><div><span>飛行時間</span><strong id="impact-time"></strong></div></div><button class="replay-button" id="replay-button">↻ 破裂をスロー</button><button class="replay-button" id="city-report-button">観測結果 ↗</button><span id="city-summary" class="effect-note">街を観測中</span></section>
     <div class="scene-message" id="scene-message" role="status">実験場を準備中…</div>
+    <div id="replay-tools" hidden><button id="replay-pause" type="button">Ⅱ 停止</button><button id="replay-step" type="button">1コマ進む</button></div>
     <div class="control-dock">
       <section class="vegetable-panel" aria-labelledby="vegetable-heading"><div class="panel-heading"><h2 id="vegetable-heading"><span class="step-number">01</span> 野菜を選ぶ</h2><span class="mass" id="mass">150 g</span></div><div class="vegetable-list" id="vegetable-list">${VEGETABLES.map((v, i) => `<button class="vegetable-button${i === 0 ? ' selected' : ''}" data-vegetable="${v.id}" aria-pressed="${i === 0}" aria-label="${v.name}を選ぶ">${vegetableIcon(v.id)}<span>${v.name}</span></button>`).join('')}</div></section>
       <section class="throw-panel" aria-labelledby="throw-heading"><div class="panel-heading"><h2 id="throw-heading"><span class="step-number">02</span> タイミングよく投げる</h2><button class="settings-button" id="settings-button" aria-label="実験設定を開く"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>設定</span></button></div><div class="throw-row"><div class="gauge-wrap"><div class="gauge" id="gauge" role="meter" aria-label="速度ゲージ" aria-valuemin="0" aria-valuemax="2000" aria-valuenow="0"><div class="gauge-fill" id="gauge-fill"></div><div class="sonic-mark" title="音速"></div><div class="gauge-ticks"></div><div class="gauge-needle" id="gauge-needle"></div></div><div class="gauge-labels"><span>0</span><span class="sonic-label">音速</span><span>2000 <small>km/h</small></span></div></div><button class="throw-button" id="throw-button" disabled><span>準備中</span>${arrow}</button></div><div class="control-hint"><span id="control-hint">タップで速度を決定</span><span class="keyboard-hint"><kbd>SPACE</kbd> でも投げる</span></div></section>
     </div>
   </main>
   <footer><span>0 → 2000 km/h <span class="footer-dot">·</span> VEGETABLE VELOCITY LAB</span><span>重力・空気抵抗を計算 <span class="footer-dot">·</span> 破壊・飛行中の形状は仮定</span></footer>
-  <dialog id="settings-dialog"><div class="dialog-heading"><h2>実験設定</h2><button class="close-button" data-close="settings-dialog" aria-label="設定を閉じる">×</button></div><form id="experiment-form"><label class="input-label" for="exact-speed">速度を指定</label><div class="number-input"><input type="number" id="exact-speed" min="0" max="2000" step="1" value="2000" required inputmode="numeric"><span>km/h</span></div><div class="presets">${[0, 100, 1000, 2000].map(v => `<button type="button" data-preset="${v}">${v}</button>`).join('')}</div><label class="input-label angle-label" for="angle">投げる角度 <output id="angle-output">2°</output></label><input type="range" id="angle" min="-3" max="5" step="1" value="2"><div class="range-labels"><span>−3°</span><span>5°</span></div><details class="material-settings"><summary>物性の仮定</summary><label class="toggle-label"><input type="checkbox" id="air-breakup" checked> 空中崩壊を計算</label><label class="input-label" for="strength">有効強度（仮定）<output id="strength-output">150 kPa</output></label><input type="range" id="strength" min="50" max="1000" step="25" value="150"><p>全野菜に共通の仮定値。実測強度ではありません。</p><label class="input-label" for="acoustic-share">衝突音への変換率（仮定）</label><select id="acoustic-share"><option value="0.0001">0.01%</option><option value="0.001" selected>0.1%</option><option value="0.01">1%</option></select><p>低い値・高い値でも試して比較できます。</p></details><button type="submit" class="throw-button exact-throw"><span>この速度で投げる</span>${arrow}</button></form><p class="dialog-note">通常は実時間。スローは再生時のみ。<br>破壊は材質を仮定した演出です。</p></dialog>
-  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>形を保って発射された野菜に、空気の圧縮による荷重がかかる近似です。有効強度を超えた負荷が続くと32個の破片群に変わり、平均軌道の空気抵抗が増えます。強度150kPaは全野菜共通の仮定値。皮・果肉・葉の違いは未解決です。</p><p>先端の圧力・空気温度は理想気体の垂直衝撃波とよどみ点の式で計算。野菜内部や離れた窓の圧力・温度ではありません。青い波は代表波面です。</p><p>衝突音はエネルギーの0.1%・幅1msを仮定した球面の弱い波として試算。反射・回折・飛行中のソニックブームの圧力・建物倒壊は未計算です。窓への直撃は完全捕捉と仮の破損閾値を使います。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a><a class="source-link" href="https://www.grc.nasa.gov/www/k-12/BGP/mach.html" target="_blank" rel="noopener noreferrer">NASA · マッハ数と波 ↗</a><a class="source-link" href="https://www.grc.nasa.gov/WWW/k-12/airplane/normal.html" target="_blank" rel="noopener noreferrer">NASA · 衝撃波の式 ↗</a></dialog>
+  <dialog id="settings-dialog"><div class="dialog-heading"><h2>実験設定</h2><button class="close-button" data-close="settings-dialog" aria-label="設定を閉じる">×</button></div><form id="experiment-form"><label class="input-label" for="exact-speed">速度を指定</label><div class="number-input"><input type="number" id="exact-speed" min="0" max="2000" step="1" value="2000" required inputmode="numeric"><span>km/h</span></div><div class="presets">${[0, 100, 1000, 2000].map(v => `<button type="button" data-preset="${v}">${v}</button>`).join('')}</div><label class="input-label angle-label" for="angle">投げる角度 <output id="angle-output">2°</output></label><input type="range" id="angle" min="-3" max="5" step="1" value="2"><div class="range-labels"><span>−3°</span><span>5°</span></div><details class="material-settings"><summary>物性の仮定</summary><label class="toggle-label"><input type="checkbox" id="air-breakup"> 空中崩壊（未検証）</label><label class="input-label" for="strength">有効強度（仮定）<output id="strength-output">150 kPa</output></label><input type="range" id="strength" min="50" max="1000" step="25" value="150"><p>全野菜に共通の仮定値。実測強度ではありません。</p><label class="input-label" for="acoustic-share">衝突音への変換率（仮定）</label><select id="acoustic-share"><option value="0.0001">0.01%</option><option value="0.001" selected>0.1%</option><option value="0.01">1%</option></select><p>低い値・高い値でも試して比較できます。</p></details><button type="submit" class="throw-button exact-throw"><span>この速度で投げる</span>${arrow}</button></form><p class="dialog-note">通常は実時間。スローは再生時のみ。<br>破壊は材質を仮定した演出です。</p></dialog>
+  <dialog id="model-dialog"><div class="dialog-heading"><h2>物理モデル</h2><button class="close-button" data-close="model-dialog" aria-label="物理モデルを閉じる">×</button></div><p class="model-lead">重力と、音速付近の変化を含む<br>空気抵抗を計算。</p><div class="formula">F<sub>D</sub> = ½ ρ C<sub>D</sub> A v²</div><p>15°C・海面上・無風。<br>音速は約1,225 km/h。</p><p>形・重さ・抵抗係数は代表的な仮定値。音速付近の抵抗増加も近似です。</p><p>初期設定は形状維持の比較条件です。空中崩壊をONにすると、空気の圧縮による荷重を仮定して計算します。有効強度を超えた負荷が続くと32個の破片群に変わり、平均軌道の空気抵抗が増えます。強度150kPaは全野菜共通の仮定値。皮・果肉・葉の破断条件は未解決です。</p><p>衝突時の変形・皮・果肉・飛沫は材質の違いを見せる描画モデルです。接触時間の目安と破片の大きさ分布も未検証。スロー再生では接触部分を特に遅くして観察できます。</p><p>先端の圧力・空気温度は理想気体の垂直衝撃波とよどみ点の式で計算。野菜内部や離れた窓の圧力・温度ではありません。青い波は代表波面です。</p><p>衝突音はエネルギーの0.1%・幅1msを仮定した球面の弱い波として試算。反射・回折・飛行中のソニックブームの圧力・建物倒壊は未計算です。窓への直撃は完全捕捉と仮の破損閾値を使います。</p><a class="source-link" href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/" target="_blank" rel="noopener noreferrer">NASA · 抵抗の式 ↗</a><a class="source-link" href="https://www.grc.nasa.gov/www/k-12/BGP/mach.html" target="_blank" rel="noopener noreferrer">NASA · マッハ数と波 ↗</a><a class="source-link" href="https://www.grc.nasa.gov/WWW/k-12/airplane/normal.html" target="_blank" rel="noopener noreferrer">NASA · 衝撃波の式 ↗</a></dialog>
   <dialog id="city-dialog"><div class="dialog-heading"><h2>街への影響</h2><button class="close-button" data-close="city-dialog" aria-label="観測を閉じる">×</button></div><div id="city-report"></div><p class="dialog-note">圧力の試算は衝突音のみ。反射・倒壊は未計算。<br>崩壊・窓の破損は実測未検証です。</p></dialog>
 `;
 
@@ -67,7 +68,7 @@ let lastCityReport = '';
 let strengthPa = DEFAULT_BREAKUP.strengthPa;
 let acousticEfficiency = 0.001;
 let shotAcousticEfficiency = 0.001;
-let shotBreakupEnabled = true;
+let shotBreakupEnabled = false;
 let shotAngleDeg = 2;
 let projectileIsFragmented = false;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -81,6 +82,10 @@ let shotNumber = 0;
 let flightElapsed = 0;
 let playbackSpeed = 1;
 let aftermathElapsed = 0;
+let aftermathSimTime = 0;
+let contactSeconds = 0.0002;
+let replayPaused = false;
+let replayStepSeconds = 0;
 let damage: ReturnType<typeof getImpactResponse> | null = null;
 let isReplay = false;
 let sound = false;
@@ -129,8 +134,13 @@ function makeProjectile() {
 
 function ready() {
   state = 'ready';
+  isReplay = false;
+  replayPaused = false;
+  replayStepSeconds = 0;
   result = null;
   damage = null;
+  $('replay-tools').hidden = true;
+  document.body.classList.remove('contact-replay');
   effects.clear();
   cityExperiment.reset();
   cityView.reset();
@@ -182,9 +192,20 @@ function launch(speed: number, replay = false) {
   }
   if (!result) return;
   isReplay = replay;
+  replayPaused = false;
+  replayStepSeconds = 0;
+  $('replay-tools').hidden = true;
+  $('replay-pause').textContent = 'Ⅱ 停止';
+  document.body.classList.remove('contact-replay');
+  if (replay && overview) {
+    overview = false;
+    $('view-button').setAttribute('aria-pressed', 'false');
+    $('view-button').textContent = '街を俯瞰';
+  }
   state = 'flying';
   flightElapsed = 0;
   aftermathElapsed = 0;
+  aftermathSimTime = 0;
   playbackSpeed = playbackRate(result.impact.time, replay);
   lastFrame = performance.now();
   effects.clear();
@@ -219,6 +240,9 @@ function beginImpact() {
   state = 'impact';
   aftermathElapsed = 0;
   const hit = result.impact;
+  contactSeconds = contactTimescale(result.vegetable.radiusM, Math.abs(hit.kind === 'ground' ? hit.velocity.y : hit.velocity.z));
+  $('replay-tools').hidden = !isReplay;
+  document.body.classList.toggle('contact-replay', isReplay);
   damage = getImpactResponse({ massKg: result.vegetable.massKg, speedKmh: hit.speedKmh, normalEnergyJ: hit.normalEnergyJ, kind: hit.kind, vegetableId: result.vegetable.id, radiusM: result.vegetable.radiusM });
   if (result.breakup && damage.vegetable === 'intact') damage = { ...damage, vegetable: 'split', fragmentCount: 32 };
   if (damage.vegetable !== 'intact') projectile.visible = false;
@@ -229,7 +253,7 @@ function beginImpact() {
     projectile.position.y += 0.008 - bounds.min.y;
   }
   const point = new THREE.Vector3(hit.contactPoint.x, hit.contactPoint.y, hit.contactPoint.z);
-  effects.impact({ position: point.clone().add(new THREE.Vector3(0, hit.kind === 'ground' ? 0.01 : 0, hit.kind === 'target' ? 0.02 : 0)), color: new THREE.Color(result.vegetable.color).getHex(), energyJ: hit.energyJ, kind: hit.kind, speedKmh: hit.speedKmh, response: damage, vegetableId: result.vegetable.id, massKg: result.vegetable.massKg, radiusM: result.vegetable.radiusM, incomingVelocity: new THREE.Vector3(hit.velocity.x, hit.velocity.y, hit.velocity.z) });
+  effects.impact({ position: point.clone().add(new THREE.Vector3(0, hit.kind === 'ground' ? 0.01 : 0, hit.kind === 'target' ? 0.02 : 0)), color: new THREE.Color(result.vegetable.color).getHex(), energyJ: hit.energyJ, kind: hit.kind, speedKmh: hit.speedKmh, response: damage, vegetableId: result.vegetable.id, massKg: result.vegetable.massKg, radiusM: result.vegetable.radiusM, incomingVelocity: new THREE.Vector3(hit.velocity.x, hit.velocity.y, hit.velocity.z), contactSeconds, preFragmented: !!result.breakup });
   if (hit.kind === 'target') world.setTargetDamage(hit.normalEnergyJ, hit.contactPoint.x, hit.contactPoint.y, damage);
   chaseCamera.impact(point, hit.kind === 'target', damage.severity);
   $('flight-tag').textContent = isReplay ? `IMPACT · ×${playbackSpeed.toFixed(3)}` : '実時間 · ×1';
@@ -240,6 +264,8 @@ function beginImpact() {
 function revealResult() {
   if (!result || !damage) return;
   state = 'result';
+  $('replay-tools').hidden = true;
+  document.body.classList.remove('contact-replay');
   const hit = result.impact;
   $('result-eyebrow').textContent = `EXPERIMENT ${String(shotNumber).padStart(3, '0')}${isReplay ? ' · REPLAY' : ''}`;
   $('result-title').textContent = hit.kind === 'target' ? damage.target === 'breached' ? '的に穴。' : damage.target === 'cracked' ? '的が割れた。' : '命中。' : hit.kind === 'ground' ? '地面に着地。' : '範囲外。';
@@ -258,11 +284,12 @@ function revealResult() {
 }
 
 function frame(now: number) {
-  const delta = Math.max(0, (now - lastFrame) / 1000);
+  const frameDelta = Math.max(0, (now - lastFrame) / 1000);
+  const delta = isReplay && replayPaused ? replayStepSeconds : frameDelta;
+  replayStepSeconds = 0;
   lastFrame = now;
   if (!hidden) {
     let aftermathDelta = delta;
-    if (state === 'flying' || state === 'impact' || state === 'result') experimentTime += delta * playbackSpeed;
     if (state === 'ready' && !settingsDialog.open && !modelDialog.open && !cityDialog.open) {
       meterClock += delta * 0.57;
       gaugeSpeed = Math.round(2000 * (1 - Math.abs(meterClock % 2 - 1)));
@@ -298,14 +325,26 @@ function frame(now: number) {
         aftermathDelta = Math.max(0, flightElapsed - result.impact.time / playbackSpeed);
       }
     }
-    if (state === 'impact') {
+    let visualDelta = delta;
+    if (state === 'impact' || state === 'result') {
       aftermathElapsed += aftermathDelta;
-      if (aftermathElapsed >= 0.6) revealResult();
+      const nextTime = aftermathTimeAt(aftermathElapsed, isReplay, contactSeconds);
+      visualDelta = Math.max(0, nextTime - aftermathSimTime);
+      aftermathSimTime = nextTime;
+      if (state === 'impact' && aftermathElapsed >= (isReplay ? 5.2 : 0.9)) revealResult();
+      if (isReplay && state === 'impact') {
+        const rate = delta > 0 ? visualDelta / delta : 0;
+        $('flight-tag').textContent = replayPaused ? '停止中 · 破裂を観察' : `破裂を観察 · ×${rate.toFixed(rate < 0.01 ? 4 : 2)}`;
+      }
     }
-    const visualDelta = aftermathDelta * (isReplay && (state === 'impact' || state === 'result') ? playbackSpeed : 1);
     effects.update(visualDelta);
     world.update(visualDelta);
-    if ((state === 'impact' || state === 'result') && damage?.target === 'breached') {
+    const observingContact = isReplay && state === 'impact' && aftermathSimTime < contactSeconds * 2.5 + 0.0006;
+    cityView.setWaves(wavesVisible && !observingContact);
+    if (observingContact && result) {
+      const p = result.impact.contactPoint;
+      chaseCamera.observeContact(new THREE.Vector3(p.x, p.y, p.z), result.vegetable.radiusM, result.impact.kind === 'target');
+    } else if ((state === 'impact' || state === 'result') && damage?.target === 'breached') {
       const remnants = effects.getFollowTarget();
       if (remnants) {
         chaseCamera.followAftermath(remnants.position, remnants.velocity, remnants.radius, remnants.landed);
@@ -314,6 +353,8 @@ function frame(now: number) {
       }
     }
     chaseCamera.update(Math.min(delta, 0.05));
+    if (result && (state === 'impact' || state === 'result')) experimentTime = result.impact.time + aftermathSimTime;
+    else if (state === 'flying') experimentTime = Math.min(flightElapsed * playbackSpeed, result!.impact.time);
     cityView.update(experimentTime);
     const arrival = cityView.arrivals[0];
     if (!waveHeard && arrival != null && experimentTime >= arrival) {
@@ -411,6 +452,15 @@ $('vegetable-list').addEventListener('click', event => {
 });
 throwButton.addEventListener('click', () => { if (state === 'result') ready(); else launch(gaugeSpeed); });
 $('replay-button').addEventListener('click', () => launch(result?.launchSpeedKmh ?? 0, true));
+$('replay-pause').addEventListener('click', () => {
+  replayPaused = !replayPaused;
+  $('replay-pause').textContent = replayPaused ? '▶ 再生' : 'Ⅱ 停止';
+});
+$('replay-step').addEventListener('click', () => {
+  replayPaused = true;
+  replayStepSeconds += 0.08;
+  $('replay-pause').textContent = '▶ 再生';
+});
 $('sound-button').addEventListener('click', () => {
   sound = !sound;
   $('sound-button').textContent = `音 ${sound ? 'ON' : 'OFF'}`;

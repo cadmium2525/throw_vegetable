@@ -112,3 +112,9 @@ footer{font-size:11px;letter-spacing:.6px}
 .theory-results dd{margin:6px 0 0;font-size:clamp(22px,5.5vw,30px);font-weight:700;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .theory-results sup{font-size:.65em}
 .theory-panel .source-link{font-size:16px;overflow-wrap:anywhere}
+.throw-button span{white-space:nowrap}
+.contact-replay .speed-readout,.contact-replay .view-tools,.contact-replay .wave-key{opacity:0;pointer-events:none}
+#replay-tools{position:absolute;left:50%;bottom:234px;transform:translateX(-50%);display:flex;gap:8px;z-index:5;white-space:nowrap}
+#replay-tools button{font-size:17px;font-weight:700;padding:10px 16px;background:#f4f3e9ed;border:1px solid #a8b8a5;border-radius:24px;min-height:44px}
+.contact-replay .flight-tag{top:15px;bottom:auto}
+@media(max-width:700px){#replay-tools{bottom:306px}.throw-button{flex-basis:125px;gap:10px;padding:0 12px}}

@@ -26,6 +26,17 @@ test('all mass remains represented in the explicit 55/25/20 breached split', () 
   }
 });
 
+test('mixed sizes preserve each mass budget and resolve submillisecond motion', () => {
+  const cloud = createAftermath(base);
+  const radii = cloud.particles.filter(p => p.kind === 'splash').map(p => p.radiusM);
+  assert.ok(Math.max(...radii) / Math.min(...radii) > 3);
+  const start = { ...cloud.particles[0].position };
+  stepAftermath(cloud, 0.0005);
+  assert.ok(cloud.elapsedSeconds > 0 && cloud.elapsedSeconds <= 0.0005 + 1e-12);
+  assert.notDeepEqual(start, cloud.particles[0].position);
+  close(sumMass(cloud), base.massKg);
+});
+
 test('forward fragments start behind the board, fit the opening and retain forward direction', () => {
   const cloud = createAftermath(base);
   const forward = cloud.particles.filter(particle => particle.kind === 'forward');

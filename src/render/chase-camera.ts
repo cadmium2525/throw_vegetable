@@ -42,7 +42,7 @@ function clearTargetSightline(eye: THREE.Vector3, focus: THREE.Vector3): void {
 export function aftermathPose(position: THREE.Vector3, velocity: THREE.Vector3, radius: number, fov: number, aspect: number, elapsed = 0, landed = false): CameraPose {
   const cloudRadius = THREE.MathUtils.clamp(radius, 0.1, 1.2);
   const halfField = Math.tan(THREE.MathUtils.degToRad(fov / 2)) * Math.min(1, Math.max(0.2, aspect));
-  const distance = THREE.MathUtils.clamp(cloudRadius / (0.43 * halfField), landed ? 0.65 : 1.4, 8.5);
+  const distance = THREE.MathUtils.clamp(cloudRadius / (0.43 * halfField), landed ? 0.4 : 0.5, 8.5);
   const forward = new THREE.Vector3(velocity.x, 0, velocity.z);
   if (forward.lengthSq() < 0.01) forward.set(0, 0, -1);
   else forward.normalize();
@@ -52,12 +52,12 @@ export function aftermathPose(position: THREE.Vector3, velocity: THREE.Vector3, 
   if (landed) {
     offset = new THREE.Vector3(distance * 0.3, Math.max(0.3, distance * 0.34), distance * 0.9);
   } else {
-    const initial = side.clone().multiplyScalar(Math.max(1.8, distance * 0.8))
-      .addScaledVector(forward, -Math.min(1.8, distance * 0.65));
-    initial.y = Math.max(0.65, distance * 0.28);
+    const initial = side.clone().multiplyScalar(distance * 0.8)
+      .addScaledVector(forward, -distance * 0.65);
+    initial.y = Math.max(0.16, distance * 0.28);
     const trailing = side.clone().multiplyScalar(distance * 0.46)
       .addScaledVector(forward, -distance * 0.86);
-    trailing.y = Math.max(0.55, distance * 0.3);
+    trailing.y = Math.max(0.16, distance * 0.3);
     const orbit = THREE.MathUtils.smootherstep(elapsed, 0.12, 0.52);
     offset = initial.lerp(trailing, orbit);
   }
@@ -88,6 +88,19 @@ export function createChaseCamera(camera: THREE.PerspectiveCamera, reducedMotion
     }
   };
   return {
+    observeContact(point: THREE.Vector3, radius: number, target: boolean) {
+      applyLens();
+      pullingBack = false;
+      aftermath = null;
+      const halfField = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(1, camera.aspect);
+      const distance = Math.max(0.24, radius * 2.4 / (0.55 * halfField));
+      focus.copy(point);
+      camera.position.copy(point).add(target
+        ? new THREE.Vector3(distance * 0.56, distance * 0.3, distance * 0.8)
+        : new THREE.Vector3(distance * 0.4, distance * 0.7, distance * 0.65));
+      camera.position.y = Math.max(0.08, camera.position.y);
+      camera.lookAt(focus);
+    },
     follow(position: THREE.Vector3, velocity: THREE.Vector3, radius: number) {
       applyLens();
       pullingBack = false;

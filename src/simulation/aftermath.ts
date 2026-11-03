@@ -127,11 +127,15 @@ export function createAftermath(input: AftermathInput): AftermathCloud {
 
   function emitGroup(kind: AftermathParticle['kind'], count: number, groupMass: number) {
     const group: AftermathParticle[] = [];
+    // Qualitative size mixture: a few chunks, torn pieces and many fine drops.
+    // These are editable visual assumptions, not a measured fragment spectrum.
+    const weights = Array.from({ length: count }, (_, index) => index % 12 === 0 ? 16 : index % 4 === 0 ? 3 : 0.12 + random() * 0.5);
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
     let assignedMass = 0;
     for (let index = 0; index < count; index++) {
-      const massKg = index === count - 1 ? groupMass - assignedMass : groupMass / count;
+      const massKg = index === count - 1 ? groupMass - assignedMass : groupMass * weights[index] / totalWeight;
       assignedMass += massKg;
-      // Equal-density spherical parcels: all represented mass remains present.
+      // Equivalent-volume radii: all represented mass remains present.
       let radiusM = Math.cbrt(3 * massKg / (4 * Math.PI * AFTERMATH_MODEL.densityKgM3));
       if (kind === 'forward') radiusM = Math.min(radiusM, holeRadius * 0.4);
       const angle = random() * Math.PI * 2;
@@ -279,8 +283,11 @@ function integrateParticle(particle: AftermathParticle, dt: number, city?: CityE
 export function stepAftermath(cloud: AftermathCloud, dt: number, city?: CityExperiment): void {
   if (!Number.isFinite(dt) || dt < 0) throw new RangeError('Aftermath time step must be finite and nonnegative.');
   cloud.accumulatorSeconds += dt;
-  const step = AFTERMATH_MODEL.stepSeconds;
-  while (cloud.accumulatorSeconds + 1e-12 >= step) {
+  // Resolve the first millisecond for close slow replay; then use the normal
+  // fixed step. The schedule depends only on simulated time, never frame rate.
+  while (true) {
+    const step = cloud.elapsedSeconds < 1 / 120 - 1e-12 ? 1 / 14400 : AFTERMATH_MODEL.stepSeconds;
+    if (cloud.accumulatorSeconds + 1e-12 < step) break;
     for (const particle of cloud.particles) integrateParticle(particle, step, city);
     cloud.accumulatorSeconds = Math.max(0, cloud.accumulatorSeconds - step);
     cloud.elapsedSeconds += step;

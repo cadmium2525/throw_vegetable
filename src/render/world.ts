@@ -274,7 +274,8 @@ export function createPlywoodBoard() {
           velocity: new THREE.Vector3(Math.cos(theta) * spread, Math.sin(theta) * spread + random() * 1.8, state.target === 'breached' ? -(2 + random() * (5 + state.severity * 12)) : 0.4 + random()),
           rotation: new THREE.Euler(random() * 6, random() * 6, random() * 6),
           spin: new THREE.Vector3((random() - 0.5) * 18, (random() - 0.5) * 18, (random() - 0.5) * 18),
-          scale: new THREE.Vector3(0.018 + random() * 0.065, 0.008 + random() * 0.012, 0.065 + random() * (state.target === 'breached' ? 0.23 : 0.06)),
+          scale: new THREE.Vector3(0.003 + random() * 0.014, 0.002 + random() * 0.006,
+            0.008 + random() * Math.min(0.065, Math.max(0.012, holeRadius * 0.5))),
           age: 0,
         });
         splinterMesh.setColorAt(i, i % 3 === 0 ? patch.paint : i % 2 ? woodColor : darkWoodColor);

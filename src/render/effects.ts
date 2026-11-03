@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { createAftermath, stepAftermath, type AftermathCloud } from '../simulation/aftermath';
 import type { ImpactResponse } from '../simulation/impact';
 import type { CityExperiment } from '../simulation/city';
+import { createVegetableDebris } from './vegetable-fragments';
+import { createContactDeformation } from './contact-deformation';
 
 export interface ImpactOptions {
   position: THREE.Vector3;
@@ -20,6 +22,8 @@ export interface ImpactOptions {
   massKg?: number;
   radiusM?: number;
   incomingVelocity?: THREE.Vector3;
+  contactSeconds?: number;
+  preFragmented?: boolean;
 }
 
 export interface FollowTarget {
@@ -48,7 +52,6 @@ type Mist = {
 };
 
 type FragmentStyle = {
-  scale: THREE.Vector3;
   rotation: THREE.Euler;
   spin: THREE.Vector3;
 };
@@ -62,7 +65,9 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
   let cloud: AftermathCloud | null = null;
   let followedParticleId: number | null = null;
   let depositsOnTarget = false;
-  let fragments: THREE.InstancedMesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial> | null = null;
+  let fragments: ReturnType<typeof createVegetableDebris> | null = null;
+  let contact: ReturnType<typeof createContactDeformation> | null = null;
+  let effectAge = 0;
   let splat: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null = null;
   const styles: FragmentStyle[] = [];
   const instanceTransform = new THREE.Object3D();
@@ -109,11 +114,12 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
   function clearParticles() {
     for (let i = mist.length - 1; i >= 0; i--) removeMist(i);
     if (fragments) {
-      root.remove(fragments);
-      fragments.geometry.dispose();
-      fragments.material.dispose();
+      fragments.dispose();
       fragments = null;
     }
+    contact?.dispose();
+    contact = null;
+    effectAge = 0;
     cloud = null;
     followedParticleId = null;
     depositsOnTarget = false;
@@ -161,9 +167,7 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
       response,
       seed: sequence,
     });
-    // Lock the camera to one actual fragment for the entire aftermath. The
-    // representative velocity is selected once; later dispersion never moves
-    // the focus into empty space between fragments.
+    // Follow one of the larger surviving pieces, rather than empty cloud space.
     const forward = cloud.particles.filter(particle => particle.kind === 'forward');
     const forwardMass = forward.reduce((sum, particle) => sum + particle.massKg, 0);
     if (forwardMass > 0) {
@@ -181,8 +185,8 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
           + (particle.velocity.y - meanVelocity.y) ** 2
           + (particle.velocity.z - meanVelocity.z) ** 2;
         const tied = Math.abs(distance - bestDistance) < 1e-12;
-        if (distance < bestDistance - 1e-12 || tied && (particle.massKg > bestMass
-          || particle.massKg === bestMass && particle.id < (followedParticleId ?? Infinity))) {
+        if (particle.massKg > bestMass || particle.massKg === bestMass && (distance < bestDistance
+          || tied && particle.id < (followedParticleId ?? Infinity))) {
           followedParticleId = particle.id;
           bestDistance = distance;
           bestMass = particle.massKg;
@@ -196,31 +200,25 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
       eggplant: 0xe8dbb4, pumpkin: 0xf6b43e, cabbage: 0xdce4b9,
     };
     const fleshColor = new THREE.Color(fleshColors[options.vegetableId ?? ''] ?? options.color);
-    fragments = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(1, 0),
-      new THREE.MeshStandardMaterial({ roughness: 0.33, metalness: 0, flatShading: true }),
-      cloud.particles.length,
-    );
-    fragments.name = 'persistent-vegetable-fragments';
-    fragments.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    fragments.frustumCulled = false;
-    fragments.castShadow = true;
-    fragments.receiveShadow = true;
-    root.add(fragments);
-    cloud.particles.forEach((particle, i) => {
-      const skin = i % 6 === 0;
+    fragments = createVegetableDebris(options.vegetableId ?? 'tomato', cloud.particles, options.color);
+    root.add(fragments.root);
+    cloud.particles.forEach((particle) => {
       const deposited = particle.kind === 'deposit' && depositsOnTarget;
       styles.push({
-        scale: deposited ? new THREE.Vector3(1.2, 1.2, 0.16)
-          : skin ? new THREE.Vector3(0.7, 1.6, 0.2)
-          : new THREE.Vector3(0.85 + random() * 0.3, 0.7 + random() * 0.4, 0.75 + random() * 0.4),
         rotation: deposited ? new THREE.Euler(0, 0, random() * Math.PI * 2)
           : new THREE.Euler(random() * 6, random() * 6, random() * 6),
         spin: deposited ? new THREE.Vector3() : new THREE.Vector3((random() - 0.5) * 10, (random() - 0.5) * 10, (random() - 0.5) * 10),
       });
-      fragments!.setColorAt(i, skin ? skinColor : fleshColor.clone().lerp(new THREE.Color(0xfff8d9), random() * 0.18));
     });
-    if (fragments.instanceColor) fragments.instanceColor.needsUpdate = true;
+    contact = createContactDeformation({
+      vegetableId: options.vegetableId ?? 'tomato', radiusM: radius,
+      position: options.position,
+      normal: new THREE.Vector3(0, options.kind === 'ground' ? 1 : 0, options.kind === 'ground' ? 0 : 1),
+      contactSeconds: options.contactSeconds ?? 0.0002, severity,
+      preFragmented: options.preFragmented ?? false,
+    });
+    root.add(contact.root);
+    fragments.setOpacity(contact.update(0));
     renderFragments();
 
     // Mist fades by dilution; the mass-carrying fragments never expire.
@@ -299,29 +297,22 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
       const style = styles[i];
       const adhering = particle.kind === 'deposit' && depositsOnTarget;
       instanceTransform.position.set(particle.position.x, particle.position.y, particle.position.z);
-      instanceTransform.scale.copy(style.scale).multiplyScalar(particle.radiusM);
-      if (particle.landed && !adhering && !particle.surfaceId) {
-        // Flatten wet pulp on the ground while retaining visible resting bits.
-        instanceTransform.scale.y *= 0.45;
-        instanceTransform.position.y = instanceTransform.scale.y + 0.001;
-        instanceTransform.rotation.set(0, style.rotation.y, 0);
-      } else {
-        if (adhering) instanceTransform.position.z = -11.994 + instanceTransform.scale.z;
-        const spinTime = particle.landed ? 0 : cloud!.elapsedSeconds;
-        instanceTransform.rotation.set(
+      if (adhering) instanceTransform.position.z = -11.994;
+      const spinTime = particle.landed ? 0 : effectAge;
+      instanceTransform.rotation.set(
         style.rotation.x + style.spin.x * spinTime,
         style.rotation.y + style.spin.y * spinTime,
         style.rotation.z + style.spin.z * spinTime,
-        );
-      }
-      instanceTransform.updateMatrix();
-      fragments!.setMatrixAt(i, instanceTransform.matrix);
+      );
+      fragments!.updateParticle(i, instanceTransform.position, instanceTransform.rotation,
+        particle.radiusM, particle.landed && !particle.surfaceId, adhering);
     });
-    fragments.instanceMatrix.needsUpdate = true;
   }
 
   function update(realDelta: number) {
     const dt = Number.isFinite(realDelta) ? Math.max(0, realDelta) : 0;
+    effectAge += dt;
+    if (contact && fragments) fragments.setOpacity(contact.update(effectAge));
     if (cloud) {
       stepAftermath(cloud, dt, city);
       renderFragments();
@@ -356,7 +347,7 @@ export async function createEffects(scene: THREE.Scene, city?: CityExperiment): 
     return {
       position: new THREE.Vector3(representative.position.x, representative.position.y, representative.position.z),
       velocity: new THREE.Vector3(representative.velocity.x, representative.velocity.y, representative.velocity.z),
-      radius: THREE.MathUtils.clamp(Math.sqrt(localVariance / Math.max(1e-12, localMass)), 0.08, 0.35),
+      radius: THREE.MathUtils.clamp(Math.max(representative.radiusM * 2.3, Math.sqrt(localVariance / Math.max(1e-12, localMass)) * 0.3), 0.035, 0.2),
       landed: representative.landed,
     };
   }
