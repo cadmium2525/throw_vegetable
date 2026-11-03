@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createVegetable } from './vegetables';
 import type { WorldView } from './world';
 import { nearLightFrame, type nearLightShot, type NearLightMedium } from '../simulation/near-light';
+import { createDemolitionView } from './demolition';
 
 /** Illustrative interaction paths. None of this geometry is a damage contour,
  * radiation transport solution, or a prediction of how far the vegetable survives. */
@@ -9,6 +10,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
   const root = new THREE.Group();
   root.visible = false;
   world.scene.add(root);
+  const demolition = createDemolitionView(world.scene);
   let vegetable: THREE.Group | null = null;
   let specimenRadius = 0.05;
   const ownMaterials: THREE.Material[] = [];
@@ -49,7 +51,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
   }
   const background = world.scene.background;
   const fog = world.scene.fog;
-  const modeFog = new THREE.Fog('#303e52', 35, 110);
+  const modeFog = new THREE.Fog('#303e52', 65, 160);
   const lights: { light: THREE.Light; intensity: number }[] = [];
   world.scene.traverse(node => { if (node instanceof THREE.Light) lights.push({ light: node, intensity: node.intensity }); });
   function removeVegetable() {
@@ -60,6 +62,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
   return {
     show(id: string) {
       root.visible = true;
+      demolition.reset();
       world.targetGroup.visible = false;
       world.scene.background = new THREE.Color('#303e52');
       world.scene.fog = modeFog;
@@ -68,10 +71,12 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       specimenRadius = new THREE.Box3().setFromObject(vegetable).getBoundingSphere(new THREE.Sphere()).radius;
       root.add(vegetable);
     },
-    update(elapsed: number, medium: NearLightMedium, shot: ReturnType<typeof nearLightShot>, launched: boolean, reducedMotion: boolean) {
+    update(elapsed: number, medium: NearLightMedium, shot: ReturnType<typeof nearLightShot>, launched: boolean, reducedMotion: boolean, before = false) {
       const frame = nearLightFrame(elapsed, medium, shot);
       const air = medium === 'air' && launched;
-      lights.forEach(({ light, intensity }) => { light.intensity = intensity * (air ? 1 - frame.spread * 0.65 : 1); });
+      const fade = 1 - THREE.MathUtils.smoothstep(elapsed, 3.5, 5.5);
+      const damage = demolition.update(elapsed, shot.kineticEnergyJ, air, before);
+      lights.forEach(({ light, intensity }) => { light.intensity = intensity * (air && !before ? 1 - frame.spread * fade * 0.65 : 1); });
       const progress = launched ? frame.progress : 0;
       if (vegetable) {
         vegetable.position.set(0, 1.6, -12 * progress);
@@ -82,19 +87,19 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       }
       marker.visible = medium === 'vacuum';
       paths.forEach((path, i) => {
-        path.visible = air;
+        path.visible = air && !before && fade > 0;
         path.geometry.setDrawRange(0, Math.floor(progress * 80) * 5 * 6);
-        path.material.opacity = air ? (0.35 + 0.45 * Math.sin(Math.min(1, elapsed / 2) * Math.PI / 2)) * (1 - frame.spread * 0.25) : 0;
+        path.material.opacity = air ? (0.35 + 0.45 * Math.sin(Math.min(1, elapsed / 2) * Math.PI / 2)) * (1 - frame.spread * 0.25) * fade : 0;
         path.scale.set(0.3 + frame.spread * 0.7, 1, 1);
         // A slow, deterministic unfurling, never a strobe or a physical wave speed.
         path.rotation.z = reducedMotion ? 0 : Math.sin(i + elapsed * 0.25) * frame.spread * 0.025;
       });
       haze.forEach((cloud, i) => {
         const age = Math.max(0, progress - i / 18);
-        cloud.visible = air && age > 0;
+        cloud.visible = air && age > 0 && !before && fade > 0;
         const size = 0.15 + age * (2 + frame.spread * 4);
         cloud.scale.set(size, size, 1);
-        cloud.material.opacity = Math.min(0.65, age * 2) * (1 - frame.spread * 0.2);
+        cloud.material.opacity = Math.min(0.65, age * 2) * (1 - frame.spread * 0.2) * fade;
       });
       const camera = world.camera;
       const portrait = camera.aspect < 1;
@@ -106,14 +111,17 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       const close = new THREE.Vector3(closeDistance * 0.8, 1.6 + closeDistance * 0.3, closeDistance * 0.6 - progress * 12);
       // Keep the camera over the road; a side pullback lands inside a building.
       const wide = new THREE.Vector3(portrait ? 2.2 : 3, portrait ? 10 : 7, portrait ? 14 : 6);
+      const survey = THREE.MathUtils.smootherstep(elapsed, 3, 7);
+      wide.lerp(new THREE.Vector3(portrait ? 20 : 18, portrait ? 35 : 25, portrait ? 8 : 0), survey);
       const blend = launched && medium === 'air' ? THREE.MathUtils.smootherstep(elapsed, reducedMotion ? 0 : 0.15, reducedMotion ? 0.01 : 1.9) : 0;
       camera.position.copy(close.lerp(wide, blend));
-      const focus = new THREE.Vector3(0, 1.6, -progress * 12).lerp(new THREE.Vector3(0, 1.4, -6), blend);
+      const focus = new THREE.Vector3(0, 1.6, -progress * 12).lerp(new THREE.Vector3(0, 1.4, -6 - survey * 18), blend);
       camera.lookAt(focus);
-      return frame;
+      return { ...frame, damage };
     },
     hide() {
       root.visible = false;
+      demolition.reset();
       world.targetGroup.visible = true;
       world.scene.background = background;
       world.scene.fog = fog;
@@ -121,6 +129,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
     },
     dispose() {
       this.hide(); removeVegetable(); root.removeFromParent();
+      demolition.dispose();
       ownGeometries.forEach(g => g.dispose()); ownMaterials.forEach(m => m.dispose());
       glowTexture.dispose();
     },

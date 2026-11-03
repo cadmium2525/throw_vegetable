@@ -2,7 +2,7 @@ import { LIGHT_SPEED_MS, relativisticMotion } from './relativity';
 
 export const NEAR_LIGHT_PRESETS = [0.9, 0.99, 0.999] as const;
 export type NearLightMedium = 'air' | 'vacuum';
-export const NEAR_LIGHT_DURATION = 6;
+export const NEAR_LIGHT_DURATION = 9;
 
 /** Exact launch kinematics, deliberately separate from the ordinary drag solver. */
 export function nearLightShot(massKg: number, beta: number) {

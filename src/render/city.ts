@@ -10,6 +10,7 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
   scene.add(root);
   const box = new THREE.BoxGeometry(1, 1, 1);
   const materials = new Map<string, THREE.MeshStandardMaterial>();
+  let buildingOwner: string | null = null;
   function mat(color: string) {
     if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.82 }));
     return materials.get(color)!;
@@ -18,6 +19,7 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
     const mesh = new THREE.Mesh(box, mat(color));
     mesh.position.set(x, y, z); mesh.scale.set(w, h, d);
     mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh);
+    if (buildingOwner) mesh.userData.buildingOwner = buildingOwner;
     return mesh;
   }
   block(0, -0.06, -65, 9, 0.1, 170, '#697879');
@@ -31,6 +33,7 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
   const fractureLines = new Map<string, THREE.LineSegments>();
   const glassMaterial = new THREE.MeshStandardMaterial({ color: '#87c4ca', transparent: true, opacity: 0.38, roughness: 0.2, metalness: 0.15, depthWrite: false });
   for (const surface of experiment.surfaces) {
+    buildingOwner = surface.kind === 'wall' ? surface.id : null;
     const { min, max } = surface;
     const center = new THREE.Vector3((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
     const size = new THREE.Vector3(max.x - min.x, max.y - min.y, max.z - min.z);
@@ -47,6 +50,7 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
       block(frontX, 3.05, center.z, 0.6, 0.18, 9, center.x < 0 ? '#b57a51' : '#5b887f');
     }
     if (surface.kind === 'glass') {
+      mesh.userData.demolitionKind = 'glass';
       const points: number[] = [];
       for (let ray = 0; ray < 14; ray++) {
         const angle = ray * Math.PI * 2 / 14;
@@ -62,16 +66,20 @@ export function createCityView(scene: THREE.Scene, experiment: CityExperiment) {
       lines.visible = false; root.add(lines); fractureLines.set(surface.id, lines);
     }
   }
+  buildingOwner = null;
   // Sidewalk shelter, open toward the road; back panes share collision geometry.
   const shelter = BUS_SHELTER;
   block(5.55, -0.015, shelter.centerZ, 2.3, 0.05, 3.8, '#c6c6b5');
-  block(5.5, shelter.height, shelter.centerZ, 1.9, 0.16, 3.7, '#506f70').name = 'shelter-roof';
+  const shelterRoof = block(5.5, shelter.height, shelter.centerZ, 1.9, 0.16, 3.7, '#506f70');
+  shelterRoof.name = 'shelter-roof';
+  shelterRoof.userData.demolitionKind = 'fixture';
   for (const x of [shelter.frontX, shelter.backX]) for (const dz of [-1.7, 1.7]) {
     block(x, shelter.height / 2, shelter.centerZ + dz, 0.07, shelter.height, 0.07, '#506f70');
   }
   block(5.95, 0.48, shelter.centerZ, 0.42, 0.09, 2.5, '#a38360');
   for (const dz of [-0.9, 0.9]) block(5.95, 0.23, shelter.centerZ + dz, 0.08, 0.46, 0.08, '#506f70');
   block(3.85, 0.65, -17.1, 0.08, 1.3, 0.08, '#758583');
+  surfaceMeshes.get('street-sign')!.userData.demolitionKind = 'fixture';
   // Restrained street furniture establishes human scale without people.
   for (let z = 6; z > -100; z -= 28) for (const side of [-1, 1]) {
     block(side * 4.45, 2.15, z, 0.07, 4.3, 0.07, '#586c69');

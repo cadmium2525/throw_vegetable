@@ -33,6 +33,7 @@ test('air sequence never reports a calculated flight time; vacuum ends at exactl
     assert.ok(vacuum.vacuumTimeSeconds! <= shot.vacuumTransitSeconds!);
   }
   assert.equal(nearLightFrame(6, 'vacuum', shot).vacuumTimeSeconds, 12 / shot.speedMs);
-  assert.equal(nearLightFrame(6, 'air', shot).complete, true);
+  assert.equal(nearLightFrame(6, 'air', shot).complete, false);
+  assert.equal(nearLightFrame(9, 'air', shot).complete, true);
   assert.throws(() => nearLightFrame(NaN, 'air', shot));
 });

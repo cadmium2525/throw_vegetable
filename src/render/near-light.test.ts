@@ -24,9 +24,10 @@ test('near-light view restores the ordinary scene and never alters city geometry
       for (const time of [0, 0.2, 1, 3, 6]) {
         view.update(time, 'air', nearLightShot(0.15, 0.999), true, false);
         assert.ok(camera.position.toArray().every(Number.isFinite));
-        assert.ok(Math.abs(camera.position.x) < 5, 'camera stays within the road, clear of buildings');
+        assert.ok(Math.abs(camera.position.x) < 5 || camera.position.y > 12, 'camera stays over the road or above the roofs');
+        if (time === 3) assert.ok(light.intensity < 3.2);
       }
-      assert.ok(light.intensity < 3.2);
+      assert.equal(light.intensity, 3.2, 'light returns when the glow fades so rubble can be inspected');
       assert.deepEqual(building.position.toArray(), [7.7, 6, -12]);
       view.hide();
       assert.equal(targetGroup.visible, true);
