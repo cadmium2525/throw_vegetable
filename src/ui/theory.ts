@@ -9,7 +9,7 @@ export function mountTheoryPanel(dialog: HTMLDialogElement, specimen: () => { na
       <p class="theory-specimen"></p>
       <div class="theory-presets" role="group" aria-label="理論計算の速度">
         <button type="button" data-theory-speed="${2000 / 3.6}" aria-pressed="true">2,000 km/h</button>
-        ${[10, 90, 99].map(percent => `<button type="button" data-theory-speed="${percent / 100 * LIGHT_SPEED_MS}" aria-pressed="false">光速の${percent}%</button>`).join('')}
+        ${[10, 90, 99, 99.9].map(percent => `<button type="button" data-theory-speed="${percent / 100 * LIGHT_SPEED_MS}" aria-pressed="false">光速の${percent}%</button>`).join('')}
       </div>
       <div class="theory-results" aria-live="polite" aria-atomic="true"></div>
       <p>地上基準・発射直後の値。<br>空気中の崩壊・放射・被害は未計算。</p>

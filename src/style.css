@@ -118,3 +118,36 @@ footer{font-size:11px;letter-spacing:.6px}
 #replay-tools button{font-size:17px;font-weight:700;padding:10px 16px;background:#f4f3e9ed;border:1px solid #a8b8a5;border-radius:24px;min-height:44px}
 .contact-replay .flight-tag{top:15px;bottom:auto}
 @media(max-width:700px){#replay-tools{bottom:306px}.throw-button{flex-basis:125px;gap:10px;padding:0 12px}}
+
+/* Separate relativity lab: exact launch values, deliberately schematic visuals. */
+#near-light-button{background:#304458;color:#f7f5e9;border-color:#304458}
+.near-light-mode .hero,.near-light-mode .speed-readout,.near-light-mode .range-info,.near-light-mode .view-tools,.near-light-mode .wave-key,.near-light-mode .flight-tag,.near-light-mode .outcome,.near-light-mode .control-dock,.near-light-mode .scene-wash,.near-light-mode #replay-tools,.near-light-mode footer,.near-light-mode #model-button,.near-light-mode #sound-button{display:none!important}
+.near-light-mode main{bottom:0}
+.near-light-mode #scene{bottom:264px}
+#near-light-lab{position:absolute;inset:0;pointer-events:none;color:#edf5f6}
+#near-light-lab button,#near-light-lab select,#near-light-lab input,#near-light-lab details{pointer-events:auto}
+.light-heading{position:absolute;top:20px;left:4.4%;right:4.4%;display:flex;align-items:start;justify-content:space-between;gap:12px;text-shadow:0 1px 8px #26354d}
+.light-kicker{font-size:12px;letter-spacing:2px;color:#bfe8f0}
+.light-heading h2{font-size:clamp(24px,3vw,38px);margin:6px 0;letter-spacing:-1px}
+#light-exit{border:1px solid #a3b8c4;background:#f4f3e9;color:#304458;padding:10px 16px;border-radius:24px;font-size:16px;min-height:44px;white-space:nowrap;text-shadow:none}
+.light-caption{position:absolute;bottom:280px;left:4.4%;display:flex;flex-direction:column;gap:5px;border-left:3px solid #8cdaee;background:#26374fe8;padding:10px 16px;border-radius:0 8px 8px 0;max-width:91.2%}
+.light-caption strong{font-size:22px}.light-caption span{font-size:16px;color:#cfe2e9}
+.light-dock{position:absolute;bottom:0;left:0;right:0;min-height:264px;padding:18px 4.4% 12px;background:#eef1e9;color:var(--ink);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px 26px;pointer-events:auto;border-top:1px solid #c1cfc7}
+.light-config{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
+.light-config label{font-size:14px;display:flex;gap:5px;flex-direction:column;flex:1;min-width:140px}
+.light-config select{font:inherit;font-size:18px;background:#fffdf3;color:var(--ink);border:1px solid #9bad9d;border-radius:8px;padding:9px;min-height:46px;width:100%}
+.light-speeds,.light-medium{display:flex;gap:5px}.light-speeds{flex:1}
+.light-speeds button,.light-medium button{border-radius:8px;border:1px solid #9bad9d;background:#f7f7ee;min-height:46px;padding:8px 12px;font-size:18px;white-space:nowrap;flex:1}
+.light-speeds button[aria-pressed=true],.light-medium button[aria-pressed=true]{background:#304458;color:#fff9ec;border-color:#304458}
+.light-medium{width:100%}.light-medium button{font-size:16px;min-height:40px}
+.light-metrics{display:flex;gap:20px;align-items:center;justify-content:space-between}.light-metrics>div{min-width:0;display:flex;flex-direction:column;gap:7px}.light-metrics span{font-size:14px;color:#59695f}.light-metrics strong{font-size:clamp(21px,2.3vw,30px);font-variant-numeric:tabular-nums;white-space:nowrap}.light-metrics sup{font-size:.65em}.light-metrics small{font-size:.65em}
+.light-playback{display:flex;align-items:center;gap:8px;grid-column:1/-1}.light-playback button{font-size:18px;font-weight:700;min-height:46px;white-space:nowrap;padding:9px 18px;border-radius:25px;background:#dce4d6}.light-playback #light-launch{background:#df6745;color:#fff8ee;min-width:125px}.light-playback input{min-width:60px;flex:1;accent-color:#304458}
+#light-note{font-size:16px;margin:0;grid-column:1/-1;line-height:1.5}
+.light-evidence{position:absolute;right:4.4%;bottom:12px;font-size:15px;max-width:520px;background:#eef1e9;z-index:10}.light-evidence summary{cursor:pointer;min-height:24px}.light-evidence[open]{border:1px solid #9bad9d;box-shadow:0 5px 30px #152b4840;border-radius:10px;padding:18px;max-height:65svh;overflow:auto}.light-evidence p{font-size:16px;line-height:1.7}.light-evidence a{display:block;font-size:16px;text-decoration:underline;margin:10px 0}
+@media(max-width:1000px){.light-dock{gap:12px 16px}.light-speeds button{padding:8px}.light-metrics{flex-direction:column;align-items:start;justify-content:center;gap:8px}.light-metrics>div{gap:2px}.light-metrics strong{font-size:24px}.light-config{gap:8px}.light-evidence{bottom:10px}#light-note{padding-right:100px;font-size:14px}}
+@media(max-width:700px){
+ .near-light-mode #app{min-height:750px}.near-light-mode #scene{bottom:332px}.light-heading{top:15px;left:5%;right:5%}.light-kicker{font-size:10px}.light-heading h2{font-size:24px}#light-exit{font-size:14px;padding:8px 12px}
+ .light-caption{bottom:344px;left:5%;padding:8px 12px}.light-caption strong{font-size:18px}.light-caption span{font-size:14px}
+ .light-dock{min-height:332px;padding:12px 5% 38px;grid-template-columns:1fr;gap:9px}.light-config{gap:8px}.light-config label{min-width:115px;font-size:13px}.light-config select{font-size:16px;padding:7px}.light-speeds button{font-size:17px;padding:8px}.light-medium button{min-height:36px;font-size:15px}.light-metrics{flex-direction:row;gap:10px;justify-content:space-between}.light-metrics span{font-size:12px}.light-metrics strong{font-size:22px}.light-playback{gap:6px}.light-playback button{font-size:15px;padding:8px 12px;min-height:44px}.light-playback #light-launch{min-width:88px}.light-playback input{min-width:40px;width:40px}
+ #light-note{font-size:13px;padding:0}.light-evidence{right:5%;bottom:8px;max-width:90%;font-size:14px}.light-evidence[open]{bottom:8px}
+}

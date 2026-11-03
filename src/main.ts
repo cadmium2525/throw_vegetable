@@ -13,6 +13,7 @@ import { airFlow, DEFAULT_BREAKUP } from './simulation/flow';
 import { impactPulse, pressureAt } from './simulation/acoustics';
 import { createAirborneFragments } from './render/airborne';
 import { mountTheoryPanel } from './ui/theory';
+import { mountNearLightLab } from './ui/near-light';
 import './style.css';
 
 const icons: Record<string, string> = {
@@ -94,6 +95,7 @@ let world: ReturnType<typeof createWorld>;
 let effects: ThrowEffects;
 let projectile: THREE.Group;
 let chaseCamera: ReturnType<typeof createChaseCamera>;
+let nearLightLab: ReturnType<typeof mountNearLightLab>;
 let projectileRadius = 0.05;
 let animationId = 0;
 let lastFrame = performance.now();
@@ -288,6 +290,11 @@ function frame(now: number) {
   const delta = isReplay && replayPaused ? replayStepSeconds : frameDelta;
   replayStepSeconds = 0;
   lastFrame = now;
+  if (nearLightLab?.active) {
+    if (!hidden) { nearLightLab.update(frameDelta); world.render(); }
+    animationId = requestAnimationFrame(frame);
+    return;
+  }
   if (!hidden) {
     let aftermathDelta = delta;
     if (state === 'ready' && !settingsDialog.open && !modelDialog.open && !cityDialog.open) {
@@ -427,6 +434,17 @@ $('city-report-button').addEventListener('click', () => { showDialog(cityDialog)
 
 function showDialog(dialog: HTMLDialogElement) { dialog.showModal(); }
 $('settings-button').addEventListener('click', () => showDialog(settingsDialog));
+const nearLightButton = document.createElement('button');
+nearLightButton.id = 'near-light-button';
+nearLightButton.textContent = '近光速実験 ↗';
+document.querySelector('.view-tools')!.append(nearLightButton);
+nearLightButton.addEventListener('click', () => {
+  if (!nearLightLab || state === 'loading') return;
+  ready();
+  projectile.visible = false;
+  cityView.setWaves(false);
+  nearLightLab.open(selectedId);
+});
 const updateTheoryPanel = mountTheoryPanel(modelDialog, () => VEGETABLES.find(v => v.id === selectedId)!);
 $('model-button').addEventListener('click', () => { updateTheoryPanel(); showDialog(modelDialog); });
 document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', () => $<HTMLDialogElement>(button.dataset.close!).close()));
@@ -469,6 +487,7 @@ $('sound-button').addEventListener('click', () => {
   if (sound) tone('launch');
 });
 window.addEventListener('keydown', event => {
+  if (nearLightLab?.active) return;
   const target = event.target as HTMLElement;
   if (event.code === 'Space' && !event.repeat && !settingsDialog.open && !modelDialog.open && !cityDialog.open && !['INPUT', 'BUTTON', 'A', 'TEXTAREA'].includes(target.tagName)) { event.preventDefault(); throwButton.click(); }
 });
@@ -483,6 +502,7 @@ async function boot() {
     world.render();
     cityView = createCityView(world.scene, cityExperiment);
     effects = await createEffects(world.scene, cityExperiment);
+    nearLightLab = mountNearLightLab(world, reducedMotion, () => { ready(); lastFrame = performance.now(); });
     ready();
     $('scene-message').hidden = true;
     new ResizeObserver(() => world.resize()).observe(sceneContainer);
@@ -495,4 +515,4 @@ async function boot() {
   }
 }
 void boot();
-if (import.meta.hot) import.meta.hot.dispose(() => { cancelAnimationFrame(animationId); disposeProjectile(); effects?.dispose(); cityView?.dispose(); world?.dispose(); void audio?.close(); });
+if (import.meta.hot) import.meta.hot.dispose(() => { cancelAnimationFrame(animationId); nearLightLab?.dispose(); disposeProjectile(); effects?.dispose(); cityView?.dispose(); world?.dispose(); void audio?.close(); });
