@@ -386,7 +386,7 @@ export function createWorld(container: HTMLElement): WorldView {
     concrete: material('#dcd5bc'),
   };
 
-  const ground = object(new THREE.PlaneGeometry(600, 600), mats.grass, false);
+  const ground = object(new THREE.PlaneGeometry(1200, 1200), mats.grass, false);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.025;
   scene.add(ground);
@@ -451,7 +451,7 @@ export function createWorld(container: HTMLElement): WorldView {
       cloud.position.set(j * 2.4, (j % 2) * 0.65, 0);
       group.add(cloud);
     }
-    group.position.set(-42 + i * 13, 13 + random() * 5, -50 - random() * 15);
+    group.position.set(-150 + i * 45, 85 + random() * 20, -180 - random() * 60);
     scene.add(group);
   }
 

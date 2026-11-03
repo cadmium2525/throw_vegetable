@@ -1,4 +1,5 @@
 import { PHYSICS, type Vec3 } from './physics.ts';
+import { DISTRICT_BUILDINGS } from './districts';
 
 export interface CitySurface {
   id: string;
@@ -25,6 +26,9 @@ export function createCitySurfaces(): CitySurface[] {
     }
   }
   // Back glazing runs along the road, entirely outside its 4.5 m half-width.
+  for (const b of DISTRICT_BUILDINGS) surfaces.push({ id: b.id, kind: 'wall', normalAxis: 'x',
+    min: { x: b.x - b.width / 2, y: 0, z: b.z - b.depth / 2 },
+    max: { x: b.x + b.width / 2, y: b.height, z: b.z + b.depth / 2 } });
   for (let i = 0; i < 3; i++) surfaces.push({ id: `shelter-${i}`, kind: 'glass', min: { x: BUS_SHELTER.backX - 0.015, y: 0.35, z: BUS_SHELTER.centerZ - 1.65 + i * 1.1 }, max: { x: BUS_SHELTER.backX + 0.015, y: 2.45, z: BUS_SHELTER.centerZ - 0.59 + i * 1.1 }, normalAxis: 'x' });
   surfaces.push({ id: 'street-sign', kind: 'sign', min: { x: 3.4, y: 1.2, z: -17.1 }, max: { x: 4.3, y: 2.2, z: -17.04 }, normalAxis: 'z' });
   return surfaces;

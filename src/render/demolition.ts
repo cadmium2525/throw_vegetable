@@ -25,7 +25,9 @@ export function createDemolitionView(scene: THREE.Scene) {
     if (kind === 'wall') {
       // Hollow building: thin facade panels and floor slabs, not a solid block
       // chopped into huge cubes. These are visual shells, not an FEM model.
-      const w = mesh.scale.x, h = mesh.scale.y, d = mesh.scale.z, floors = Math.ceil(h / 2), dy = h / floors;
+      const w = mesh.scale.x, h = mesh.scale.y, d = mesh.scale.z;
+      // Distant blocks use fewer facade slabs; cost stays bounded as the city grows.
+      const floors = Math.min(mesh.name.includes('district') ? 3 : 5, Math.ceil(h / 2)), dy = h / floors;
       for (let y = 0; y < floors; y++) {
         for (const side of [-1, 1]) {
           for (let z = 0; z < 4; z++) pieces.push({ offset: new THREE.Vector3(side * w / 2, (y + 0.5) * dy - h / 2, (z + 0.5) * d / 4 - d / 2), size: new THREE.Vector3(0.2, dy, d / 4), fall: 'z', layer: y });
@@ -69,13 +71,34 @@ export function createDemolitionView(scene: THREE.Scene) {
     batches.set(kind, batch); root.add(batch);
   }
   const bounds = new THREE.Box3();
+  const trees = city?.getObjectByName('park-trees') as THREE.InstancedMesh | undefined;
+  const treeHomes: THREE.Matrix4[] = [];
+  if (trees) for (let i = 0; i < trees.count; i++) { const m = new THREE.Matrix4(); trees.getMatrixAt(i, m); treeHomes.push(m); }
+  const treePose = new THREE.Object3D();
+  const intactTreeColor = new THREE.Color('white'), fallenTreeColor = new THREE.Color('#ac9366');
+  const treeColor = new THREE.Color();
+  function updateTrees(elapsed: number, energyJ: number, enabled: boolean, before: boolean) {
+    if (!trees) return;
+    treeHomes.forEach((matrix, index) => {
+      matrix.decompose(treePose.position, treePose.quaternion, treePose.scale);
+      const phase = enabled && !before ? demolitionPhase(Math.hypot(treePose.position.x, treePose.position.z + 6), elapsed, energyJ, 'fixture') : 0;
+      treePose.rotation.z += phase * 1.4;
+      treePose.position.y -= phase * 0.8;
+      treePose.updateMatrix(); trees.setMatrixAt(index, treePose.matrix);
+      trees.setColorAt(index, treeColor.copy(intactTreeColor).lerp(fallenTreeColor, phase));
+    });
+    trees.instanceMatrix.needsUpdate = true;
+    if (trees.instanceColor) trees.instanceColor.needsUpdate = true;
+  }
   function reset() {
     root.visible = false;
+    updateTrees(0, 0, false, false);
     structures.forEach(s => s.originals.forEach((o, i) => { o.visible = s.visible[i]; }));
   }
   return {
     update(elapsed: number, energyJ: number, enabled: boolean, before: boolean) {
       const counts = { buildings: 0, windows: 0, fixtures: 0 };
+      updateTrees(elapsed, energyJ, enabled, before);
       root.visible = enabled && !before;
       for (const s of structures) {
         const distance = Math.hypot(s.center.x, s.center.z + 6);

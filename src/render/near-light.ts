@@ -51,7 +51,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
   }
   const background = world.scene.background;
   const fog = world.scene.fog;
-  const modeFog = new THREE.Fog('#303e52', 65, 160);
+  const modeFog = new THREE.Fog('#303e52', 240, 520);
   const lights: { light: THREE.Light; intensity: number }[] = [];
   world.scene.traverse(node => { if (node instanceof THREE.Light) lights.push({ light: node, intensity: node.intensity }); });
   function removeVegetable() {
@@ -71,7 +71,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       specimenRadius = new THREE.Box3().setFromObject(vegetable).getBoundingSphere(new THREE.Sphere()).radius;
       root.add(vegetable);
     },
-    update(elapsed: number, medium: NearLightMedium, shot: ReturnType<typeof nearLightShot>, launched: boolean, reducedMotion: boolean, before = false) {
+    update(elapsed: number, medium: NearLightMedium, shot: ReturnType<typeof nearLightShot>, launched: boolean, reducedMotion: boolean, before = false, cityOverview = false) {
       const frame = nearLightFrame(elapsed, medium, shot);
       const air = medium === 'air' && launched;
       const fade = 1 - THREE.MathUtils.smoothstep(elapsed, 3.5, 5.5);
@@ -104,7 +104,7 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       const camera = world.camera;
       const portrait = camera.aspect < 1;
       camera.fov = portrait ? 53 : 46;
-      camera.near = 0.005; camera.far = 200;
+      camera.near = 0.005; camera.far = 500;
       camera.updateProjectionMatrix();
       const halfField = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(1, camera.aspect);
       const closeDistance = Math.max(0.24, specimenRadius / (0.45 * halfField));
@@ -112,11 +112,16 @@ export function createNearLightView(world: Pick<WorldView, 'scene' | 'camera' | 
       // Keep the camera over the road; a side pullback lands inside a building.
       const wide = new THREE.Vector3(portrait ? 2.2 : 3, portrait ? 10 : 7, portrait ? 14 : 6);
       const survey = THREE.MathUtils.smootherstep(elapsed, 3, 7);
-      wide.lerp(new THREE.Vector3(portrait ? 20 : 18, portrait ? 35 : 25, portrait ? 8 : 0), survey);
+      // Rise above the multi-block skyline before travelling sideways.
+      wide.lerp(new THREE.Vector3(3, portrait ? 70 : 58, portrait ? 45 : 26), survey);
       const blend = launched && medium === 'air' ? THREE.MathUtils.smootherstep(elapsed, reducedMotion ? 0 : 0.15, reducedMotion ? 0.01 : 1.9) : 0;
       camera.position.copy(close.lerp(wide, blend));
       const focus = new THREE.Vector3(0, 1.6, -progress * 12).lerp(new THREE.Vector3(0, 1.4, -6 - survey * 18), blend);
       camera.lookAt(focus);
+      if (cityOverview) {
+        camera.position.set(portrait ? 115 : 100, portrait ? 175 : 130, portrait ? 115 : 40);
+        camera.lookAt(0, 0, -45);
+      }
       return { ...frame, damage };
     },
     hide() {

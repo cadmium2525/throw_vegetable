@@ -3,6 +3,7 @@ import { NEAR_LIGHT_DURATION, NEAR_LIGHT_PRESETS, nearLightShot, type NearLightM
 import { createNearLightView } from '../render/near-light';
 import type { WorldView } from '../render/world';
 import { readSandboxRecords, SANDBOX_STORAGE_KEY, type SandboxRecord } from '../simulation/demolition';
+import { mountPlanetScale } from './planet-scale';
 
 export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onExit: () => void) {
   const view = createNearLightView(world);
@@ -12,7 +13,7 @@ export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onEx
   panel.setAttribute('aria-label', '近光速実験');
   panel.innerHTML = `
     <div class="light-heading"><div><span class="light-kicker">RELATIVITY LAB</span><h2>光速の、その手前。</h2></div><button id="light-exit">通常へ戻る</button></div>
-    <button id="light-book" class="light-book">実験帳 0 / 18</button>
+    <div class="light-explore"><button id="light-book" class="light-book">実験帳 0 / 18</button><button id="light-planet" class="light-book">地球と比較</button><button id="light-city-view" class="light-book" aria-pressed="false">街全体</button></div>
     <div class="light-caption"><strong id="light-phase" role="status">発射前</strong><span id="light-damage" hidden></span><span id="light-caveat">破壊はゲーム用の仮定</span><div class="light-result-actions" id="light-result-actions" hidden><button id="light-compare" aria-pressed="false">破壊前と比べる</button><button id="light-next">次の野菜 →</button></div></div>
     <div class="light-dock">
       <div class="light-config">
@@ -36,6 +37,14 @@ export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onEx
   let shot = nearLightShot(selected.massKg, beta);
   let lastPhase = '';
   let before = false, recorded = false;
+  let cityOverview = false;
+  const planet = mountPlanetScale(panel, () => ({ name: selected.name, energyJ: shot.kineticEnergyJ, beta }));
+  element('light-planet').addEventListener('click', () => planet.show());
+  element('light-city-view').addEventListener('click', () => {
+    cityOverview = !cityOverview;
+    element('light-city-view').textContent = cityOverview ? '自動追尾' : '街全体';
+    element('light-city-view').setAttribute('aria-pressed', String(cityOverview));
+  });
   let records: SandboxRecord[] = [];
   try { records = readSandboxRecords(localStorage.getItem(SANDBOX_STORAGE_KEY)); } catch { /* Private/storage-restricted sessions still play. */ }
   const book = element<HTMLDialogElement>('light-record-dialog');
@@ -116,7 +125,7 @@ export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onEx
   }
   element('light-exit').addEventListener('click', exit);
   const keydown = (event: KeyboardEvent) => {
-    if (!active || book.open) return;
+    if (!active || book.open || planet.open) return;
     if (event.code === 'Escape') { event.preventDefault(); exit(); }
     if (event.code === 'Space' && !event.repeat && !['INPUT', 'BUTTON', 'SELECT', 'A', 'SUMMARY'].includes((event.target as HTMLElement).tagName)) {
       event.preventDefault(); if (!launched || elapsed >= NEAR_LIGHT_DURATION) play(); else setPaused(!paused);
@@ -132,8 +141,8 @@ export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onEx
       element('light-launch').focus();
     },
     update(delta: number) {
-      if (launched && !paused && !book.open) elapsed = Math.min(NEAR_LIGHT_DURATION, elapsed + Math.max(0, delta));
-      const frame = view.update(elapsed, medium, shot, launched, reducedMotion, before);
+      if (launched && !paused && !book.open && !planet.open) elapsed = Math.min(NEAR_LIGHT_DURATION, elapsed + Math.max(0, delta));
+      const frame = view.update(elapsed, medium, shot, launched, reducedMotion, before, cityOverview);
       if (frame.complete && !paused) setPaused(true);
       element<HTMLInputElement>('light-timeline').value = String(elapsed);
       element('light-result-actions').hidden = !launched || medium !== 'air' || !frame.complete;
@@ -153,6 +162,6 @@ export function mountNearLightLab(world: WorldView, reducedMotion: boolean, onEx
         : `真空の経過 ${(frame.vacuumTimeSeconds! * 1e9).toFixed(2)} ns`;
       if (phase !== lastPhase) { element('light-phase').textContent = phase; lastPhase = phase; }
     },
-    dispose() { window.removeEventListener('keydown', keydown); view.dispose(); panel.remove(); },
+    dispose() { window.removeEventListener('keydown', keydown); planet.dispose(); view.dispose(); panel.remove(); },
   };
 }

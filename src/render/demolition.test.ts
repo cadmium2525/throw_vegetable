@@ -12,12 +12,16 @@ test('collapse is seekable, instanced and fully reversible, including roof/windo
   const root = scene.getObjectByName('urban-experiment')!;
   const initial = root.children.map(mesh => ({ mesh, visible: mesh.visible, position: mesh.position.clone(), scale: mesh.scale.clone() }));
   const demolition = createDemolitionView(scene);
+  const trees = scene.getObjectByName('park-trees') as THREE.InstancedMesh;
+  const originalTree = new THREE.Matrix4(); trees.getMatrixAt(0, originalTree);
   const energy = nearLightShot(0.15, 0.99).kineticEnergyJ;
   const final = demolition.update(9, energy, true, false);
   assert.ok(final.buildings >= 4 && final.windows >= 12);
   const owners = root.children.filter(o => o.userData.buildingOwner === 'wall--1-0');
   assert.ok(owners.length > 2 && owners.every(o => !o.visible));
   demolition.update(9, energy, true, true);
+  const restoredTree = new THREE.Matrix4(); trees.getMatrixAt(0, restoredTree);
+  assert.deepEqual(restoredTree.elements, originalTree.elements);
   initial.forEach(({ mesh, visible }) => assert.equal(mesh.visible, visible));
   demolition.update(0, energy, true, false);
   initial.forEach(({ mesh, visible }) => assert.equal(mesh.visible, visible));
@@ -31,6 +35,7 @@ test('collapse is seekable, instanced and fully reversible, including roof/windo
     for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, matrix); assert.ok(matrix.elements.every(Number.isFinite)); }
   });
   demolition.reset();
+  trees.getMatrixAt(0, restoredTree); assert.deepEqual(restoredTree.elements, originalTree.elements);
   initial.forEach(({ mesh, visible, position, scale }) => {
     assert.equal(mesh.visible, visible); assert.deepEqual(mesh.position, position); assert.deepEqual(mesh.scale, scale);
   });
